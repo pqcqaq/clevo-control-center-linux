@@ -13,6 +13,7 @@ use eframe::egui::{
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_PROC_PATH: &str = "/proc/clevo_kbd_led";
+const APP_ID: &str = "clevo-keyboard-led";
 const SETTINGS_FILE: &str = "settings.json";
 const SERVICE_PID_FILE: &str = "clevo-keyboard-led.pid";
 const SERVICE_LOCK_FILE: &str = "clevo-keyboard-led.lock";
@@ -226,10 +227,78 @@ fn normalize_zones(zones: &[ZoneId]) -> Vec<ZoneId> {
     }
 }
 
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn uid_string() -> String {
+    Command::new("id")
+        .args(["-u"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|uid| !uid.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn config_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config"))
+        .join(APP_ID)
+}
+
+fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp").join(format!("{APP_ID}-{}", uid_string())))
+        .join(APP_ID)
+}
+
+fn state_dir() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".local/state"))
+        .join(APP_ID)
+}
+
 fn settings_path() -> PathBuf {
-    std::env::current_dir()
+    let path = config_dir().join(SETTINGS_FILE);
+    migrate_legacy_settings(&path);
+    path
+}
+
+fn service_pid_path() -> PathBuf {
+    runtime_dir().join(SERVICE_PID_FILE)
+}
+
+fn service_lock_path() -> PathBuf {
+    runtime_dir().join(SERVICE_LOCK_FILE)
+}
+
+fn service_log_path() -> PathBuf {
+    state_dir().join(SERVICE_LOG_FILE)
+}
+
+fn migrate_legacy_settings(target: &Path) {
+    if target.exists() {
+        return;
+    }
+
+    let legacy = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join(SETTINGS_FILE)
+        .join(SETTINGS_FILE);
+    if !legacy.exists() {
+        return;
+    }
+
+    if let Some(parent) = target.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::copy(legacy, target);
 }
 
 fn load_settings(path: &Path) -> Settings {
@@ -249,6 +318,9 @@ fn file_modified(path: &Path) -> Option<SystemTime> {
 fn atomic_write_settings(path: &Path, settings: &Settings) -> io::Result<()> {
     let json = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
     let tmp_path = path.with_extension("json.tmp");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(&tmp_path, format!("{json}\n"))?;
     fs::rename(tmp_path, path)
 }
@@ -823,10 +895,14 @@ fn ensure_service_running() {
         }
     };
 
+    let log_path = service_log_path();
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let log = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(SERVICE_LOG_FILE);
+        .open(log_path);
     let stderr = log
         .ok()
         .map(Stdio::from)
@@ -845,7 +921,7 @@ fn ensure_service_running() {
 }
 
 fn service_pid() -> Option<u32> {
-    read_pid_file(Path::new(SERVICE_PID_FILE))
+    read_pid_file(&service_pid_path())
 }
 
 fn read_pid_file(path: &Path) -> Option<u32> {
@@ -861,9 +937,7 @@ fn process_is_running(pid: u32) -> bool {
 fn active_service_pid() -> Option<u32> {
     service_pid()
         .filter(|pid| process_is_running(*pid))
-        .or_else(|| {
-            read_pid_file(Path::new(SERVICE_LOCK_FILE)).filter(|pid| process_is_running(*pid))
-        })
+        .or_else(|| read_pid_file(&service_lock_path()).filter(|pid| process_is_running(*pid)))
 }
 
 struct ServiceLock {
@@ -872,7 +946,11 @@ struct ServiceLock {
 
 impl ServiceLock {
     fn acquire() -> io::Result<Option<Self>> {
-        let path = PathBuf::from(SERVICE_LOCK_FILE);
+        let path = service_lock_path();
+        let pid_path = service_pid_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         for _ in 0..3 {
             match fs::OpenOptions::new()
                 .write(true)
@@ -881,7 +959,7 @@ impl ServiceLock {
             {
                 Ok(mut file) => {
                     writeln!(file, "{}", process::id())?;
-                    fs::write(SERVICE_PID_FILE, format!("{}\n", process::id()))?;
+                    fs::write(&pid_path, format!("{}\n", process::id()))?;
                     return Ok(Some(Self { path }));
                 }
                 Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
@@ -890,7 +968,7 @@ impl ServiceLock {
                         return Ok(None);
                     }
                     let _ = fs::remove_file(&path);
-                    let _ = fs::remove_file(SERVICE_PID_FILE);
+                    let _ = fs::remove_file(&pid_path);
                 }
                 Err(err) => return Err(err),
             }
@@ -907,7 +985,7 @@ impl ServiceLock {
 impl Drop for ServiceLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
-        let _ = fs::remove_file(SERVICE_PID_FILE);
+        let _ = fs::remove_file(service_pid_path());
     }
 }
 
