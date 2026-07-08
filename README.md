@@ -4,8 +4,8 @@
 
 项目由两部分组成：
 
-- `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露 `/proc/clevo_kbd_led`
-- `src/`：Rust 程序，同一个二进制同时提供前台 GUI 和后台灯效服务
+- `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露 `/proc/clevo_kbd_led` 和 `/proc/clevo_dchu`
+- `src/`：Rust 程序，同一个二进制同时提供前台 GUI、后台灯效服务和 DCHU 测试 CLI
 
 GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。后台服务通过固定 runtime 目录中的锁文件保持单例，多个 GUI 窗口共享同一个配置状态。
 
@@ -20,6 +20,8 @@ ACPI 路径：
 - Payload：`Package(Buffer(0x100) { G, R, B, zone, ... })`
 
 用户态通过 `/proc/clevo_kbd_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的 `[G, R, B, zone]` 数据。
+
+`/proc/clevo_dchu` 是测试接口，用于 CLI 读取 DCHU 状态或显式发送实验写命令。默认权限为 `0600`，需要 root。
 
 ## 目录结构
 
@@ -158,6 +160,32 @@ echo 'f0 ff0000' | sudo tee /proc/clevo_kbd_led
 echo 'f1 00ff00' | sudo tee /proc/clevo_kbd_led
 echo 'f2 0000ff' | sudo tee /proc/clevo_kbd_led
 ```
+
+## DCHU 测试 CLI
+
+读取实时状态和风扇表：
+
+```bash
+sudo target/release/clevo-keyboard-led dchu status
+sudo target/release/clevo-keyboard-led dchu fan-table
+sudo target/release/clevo-keyboard-led dchu caps
+```
+
+原始读取：
+
+```bash
+sudo target/release/clevo-keyboard-led dchu raw-get 0x0d
+```
+
+实验写入需要显式确认参数：
+
+```bash
+sudo target/release/clevo-keyboard-led dchu raw-set-dword 0x79 0x19000002 --i-understand
+sudo target/release/clevo-keyboard-led dchu fan-curve-set '<30-or-32-hex-bytes>' --i-understand
+sudo target/release/clevo-keyboard-led dchu power-mode 2 --i-understand
+```
+
+`raw-set`、`raw-set-dword`、`fan-curve-set`、`power-mode` 会写 EC/固件状态，只用于测试确认过的命令。
 
 ## GUI 和后台服务
 
