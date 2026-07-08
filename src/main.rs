@@ -6,9 +6,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, pos2, vec2, Align2, Button, CentralPanel, Color32, ComboBox, Context,
-    FontData, FontDefinitions, FontFamily, FontId, Frame, RichText, Sense, Slider, Stroke, Ui,
-    ViewportBuilder, ViewportCommand,
+    self, pos2, vec2, Align2, Area, Button, CentralPanel, Color32, ComboBox, Context,
+    FontData, FontDefinitions, FontFamily, FontId, Frame, Id, Order, RichText, Sense, Slider,
+    Stroke, Ui, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +17,32 @@ const SETTINGS_FILE: &str = "settings.json";
 const SERVICE_PID_FILE: &str = "clevo-keyboard-led.pid";
 const SERVICE_LOG_FILE: &str = "clevo-keyboard-led.service.log";
 const BASE_ZONES: [ZoneId; 3] = [ZoneId::F0, ZoneId::F1, ZoneId::F2];
+const ALL_ZONES: [ZoneId; 7] = [
+    ZoneId::F0,
+    ZoneId::F1,
+    ZoneId::F2,
+    ZoneId::F3,
+    ZoneId::F4,
+    ZoneId::F5,
+    ZoneId::F6,
+];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 enum ZoneId {
+    #[serde(rename = "f0")]
     F0,
+    #[serde(rename = "f1")]
     F1,
+    #[serde(rename = "f2")]
     F2,
+    #[serde(rename = "f3")]
+    F3,
+    #[serde(rename = "f4")]
+    F4,
+    #[serde(rename = "f5")]
+    F5,
+    #[serde(rename = "f6")]
+    F6,
 }
 
 impl ZoneId {
@@ -31,7 +51,15 @@ impl ZoneId {
             Self::F0 => "f0",
             Self::F1 => "f1",
             Self::F2 => "f2",
+            Self::F3 => "f3",
+            Self::F4 => "f4",
+            Self::F5 => "f5",
+            Self::F6 => "f6",
         }
+    }
+
+    fn label(self) -> &'static str {
+        self.proc_code()
     }
 }
 
@@ -144,6 +172,8 @@ struct Settings {
     brightness: u8,
     running: bool,
     f0_color: Rgb,
+    #[serde(default = "default_zones")]
+    zones: Vec<ZoneId>,
     window_pos: Option<[f32; 2]>,
 }
 
@@ -155,6 +185,7 @@ impl Default for Settings {
             brightness: 100,
             running: false,
             f0_color: Rgb::WHITE,
+            zones: default_zones(),
             window_pos: None,
         }
     }
@@ -164,6 +195,7 @@ impl Settings {
     fn sanitized(mut self) -> Self {
         self.speed = self.speed.clamp(1, 100);
         self.brightness = self.brightness.clamp(1, 100);
+        self.zones = normalize_zones(&self.zones);
         if self.mode == Mode::Custom {
             self.running = false;
         }
@@ -173,6 +205,23 @@ impl Settings {
             }
         }
         self
+    }
+}
+
+fn default_zones() -> Vec<ZoneId> {
+    BASE_ZONES.to_vec()
+}
+
+fn normalize_zones(zones: &[ZoneId]) -> Vec<ZoneId> {
+    let normalized = ALL_ZONES
+        .into_iter()
+        .filter(|zone| zones.contains(zone))
+        .collect::<Vec<_>>();
+
+    if normalized.is_empty() {
+        default_zones()
+    } else {
+        normalized
     }
 }
 
@@ -223,6 +272,9 @@ struct ClevoLedApp {
     brightness: u8,
     running: bool,
     f0_color: Rgb,
+    zones: Vec<ZoneId>,
+    settings_open: bool,
+    menu_open: bool,
     last_error: Option<String>,
     window_pos: Option<[f32; 2]>,
     dirty_settings: bool,
@@ -244,6 +296,9 @@ impl ClevoLedApp {
             brightness: settings.brightness,
             running: settings.running,
             f0_color: settings.f0_color,
+            zones: settings.zones,
+            settings_open: false,
+            menu_open: false,
             last_error: None,
             window_pos: settings.window_pos,
             dirty_settings: false,
@@ -261,14 +316,37 @@ impl ClevoLedApp {
         self.persist_settings_if_due(true);
     }
 
-    fn write_f0(&mut self, rgb: Rgb) {
-        if let Err(err) = self.writer.write(&[ZoneColor {
-            zone: ZoneId::F0,
-            rgb,
-        }]) {
+    fn selected_zones(&self) -> Vec<ZoneId> {
+        normalize_zones(&self.zones)
+    }
+
+    fn set_zone_enabled(&mut self, zone: ZoneId, enabled: bool) {
+        if enabled {
+            if !self.zones.contains(&zone) {
+                self.zones.push(zone);
+            }
+        } else if self.zones.len() > 1 {
+            self.zones.retain(|item| *item != zone);
+        }
+        self.zones = normalize_zones(&self.zones);
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+        if self.mode == Mode::Custom {
+            self.write_selected_color(self.f0_color);
+        }
+    }
+
+    fn write_selected_color(&mut self, rgb: Rgb) {
+        let colors = self
+            .selected_zones()
+            .into_iter()
+            .map(|zone| ZoneColor { zone, rgb })
+            .collect::<Vec<_>>();
+
+        if let Err(err) = self.writer.write(&colors) {
             self.last_error = Some(err.to_string());
             self.running = false;
-            eprintln!("Failed to write f0 color: {err}");
+            eprintln!("Failed to write selected color: {err}");
         }
     }
 
@@ -316,6 +394,7 @@ impl ClevoLedApp {
             brightness: self.brightness,
             running: self.running && self.mode != Mode::Custom,
             f0_color: self.f0_color,
+            zones: self.selected_zones(),
             window_pos: self.window_pos,
         };
 
@@ -342,11 +421,12 @@ impl eframe::App for ClevoLedApp {
         CentralPanel::default()
             .frame(Frame::none().fill(Color32::from_rgb(16, 18, 22)))
             .show(ctx, |ui| {
-                custom_title_bar(ui, ctx);
+                custom_title_bar(ui, ctx, self);
                 ui.add_space(2.0);
                 main_controls(ui, self);
             });
 
+        settings_viewport(ctx, self);
         self.persist_settings_if_due(false);
     }
 
@@ -355,9 +435,9 @@ impl eframe::App for ClevoLedApp {
     }
 }
 
-fn custom_title_bar(ui: &mut Ui, ctx: &Context) {
+fn custom_title_bar(ui: &mut Ui, ctx: &Context, app: &mut ClevoLedApp) {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 18.0), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 26.0), Sense::click_and_drag());
     if response.drag_started() {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
     }
@@ -365,19 +445,56 @@ fn custom_title_bar(ui: &mut Ui, ctx: &Context) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, Color32::from_rgb(16, 18, 22));
 
-    let close_rect = egui::Rect::from_min_size(pos2(rect.right() - 24.0, rect.top()), vec2(18.0, 18.0));
+    let logo_rect = egui::Rect::from_min_size(pos2(rect.left() + 6.0, rect.top() + 3.0), vec2(24.0, 20.0));
+    let logo_response = ui.interact(logo_rect, ui.id().with("logo"), Sense::click());
+    let logo_fill = if logo_response.hovered() {
+        Color32::from_rgb(54, 60, 70)
+    } else {
+        Color32::from_rgb(34, 38, 45)
+    };
+    painter.circle_filled(logo_rect.center(), 9.0, logo_fill);
+    painter.circle_filled(logo_rect.center() + vec2(-3.0, -2.5), 2.5, Color32::from_rgb(246, 92, 92));
+    painter.circle_filled(logo_rect.center() + vec2(3.0, -2.5), 2.5, Color32::from_rgb(93, 204, 132));
+    painter.circle_filled(logo_rect.center() + vec2(0.0, 3.0), 2.5, Color32::from_rgb(92, 151, 247));
+    if logo_response.clicked() {
+        app.menu_open = !app.menu_open;
+    }
+
+    if app.menu_open {
+        Area::new(Id::new("logo_menu"))
+            .order(Order::Foreground)
+            .fixed_pos(pos2(rect.left() + 6.0, rect.bottom() + 2.0))
+            .show(ui.ctx(), |ui| {
+                Frame::none()
+                    .fill(Color32::from_rgb(31, 35, 42))
+                    .rounding(6.0)
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(67, 74, 84)))
+                    .inner_margin(egui::Margin::symmetric(6.0, 6.0))
+                    .show(ui, |ui| {
+                        if ui
+                            .add_sized(vec2(68.0, 24.0), Button::new(RichText::new("设置").size(13.0)))
+                            .clicked()
+                        {
+                            app.menu_open = false;
+                            app.settings_open = true;
+                        }
+                    });
+            });
+    }
+
+    let close_rect = egui::Rect::from_min_size(pos2(rect.right() - 34.0, rect.top()), vec2(30.0, 26.0));
     let close_response = ui.interact(close_rect, ui.id().with("close"), Sense::click());
     let close_fill = if close_response.hovered() {
         Color32::from_rgb(92, 36, 42)
     } else {
         Color32::from_rgb(31, 34, 40)
     };
-    painter.circle_filled(close_rect.center(), 5.5, close_fill);
+    painter.circle_filled(close_rect.center(), 10.0, close_fill);
     painter.text(
         close_rect.center(),
         Align2::CENTER_CENTER,
         "x",
-        FontId::proportional(10.0),
+        FontId::proportional(15.0),
         Color32::from_rgb(230, 230, 230),
     );
     if close_response.clicked() {
@@ -396,11 +513,11 @@ fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
             ui.horizontal_centered(|ui| {
                 color_swatch(ui, app);
 
-                ui.add_space(14.0);
+                ui.add_space(16.0);
                 ui.vertical(|ui| {
-                    ui.set_width(170.0);
+                    ui.set_width(220.0);
                     ComboBox::from_id_salt("mode")
-                        .width(170.0)
+                        .width(220.0)
                         .selected_text(app.mode.label())
                         .show_ui(ui, |ui| {
                             for mode in Mode::all() {
@@ -409,23 +526,27 @@ fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
                                 if app.mode != old_mode {
                                     if app.mode == Mode::Custom {
                                         app.running = false;
-                                        app.write_f0(app.f0_color);
+                                        app.write_selected_color(app.f0_color);
                                     }
                                     app.mark_settings_dirty();
                                     app.persist_settings_if_due(true);
                                 }
                                 if clicked && app.running && app.mode == Mode::Custom {
-                                    app.write_f0(app.f0_color);
+                                    app.write_selected_color(app.f0_color);
                                 }
                             }
                         });
 
                     ui.add_space(8.0);
-                    let speed_response = ui.add_enabled_ui(!custom_mode, |ui| {
-                        ui.add_sized(
-                            vec2(170.0, 18.0),
-                            Slider::new(&mut app.speed, 1..=100).show_value(false),
-                        )
+                    let speed_response = ui.horizontal(|ui| {
+                        ui.set_width(220.0);
+                        ui.label(RichText::new("速度").size(12.0));
+                        ui.add_enabled_ui(!custom_mode, |ui| {
+                            ui.add_sized(
+                                vec2(174.0, 18.0),
+                                Slider::new(&mut app.speed, 1..=100).show_value(false),
+                            )
+                        }).inner
                     }).inner;
                     if speed_response.changed() {
                         app.mark_settings_dirty();
@@ -433,11 +554,15 @@ fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
                     }
 
                     ui.add_space(6.0);
-                    let brightness_response = ui.add_enabled_ui(!custom_mode, |ui| {
-                        ui.add_sized(
-                            vec2(170.0, 18.0),
-                            Slider::new(&mut app.brightness, 1..=100).show_value(false),
-                        )
+                    let brightness_response = ui.horizontal(|ui| {
+                        ui.set_width(220.0);
+                        ui.label(RichText::new("亮度").size(12.0));
+                        ui.add_enabled_ui(!custom_mode, |ui| {
+                            ui.add_sized(
+                                vec2(174.0, 18.0),
+                                Slider::new(&mut app.brightness, 1..=100).show_value(false),
+                            )
+                        }).inner
                     }).inner;
                     if brightness_response.changed() {
                         app.mark_settings_dirty();
@@ -445,7 +570,7 @@ fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
                     }
                 });
 
-                ui.add_space(14.0);
+                ui.add_space(4.0);
                 let label = if app.running { "结束" } else { "开始" };
                 if ui
                     .add_enabled(!custom_mode, Button::new(RichText::new(label).size(16.0)).min_size(vec2(64.0, 42.0)))
@@ -457,12 +582,87 @@ fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
         });
 }
 
+fn settings_viewport(ctx: &Context, app: &mut ClevoLedApp) {
+    if !app.settings_open {
+        return;
+    }
+
+    let viewport_id = ViewportId::from_hash_of("settings");
+    let builder = ViewportBuilder::default()
+        .with_title("设置")
+        .with_inner_size([238.0, 172.0])
+        .with_min_inner_size([238.0, 172.0])
+        .with_max_inner_size([238.0, 172.0])
+        .with_resizable(false);
+
+    let mut close_requested = false;
+    let mut changed_zones = Vec::new();
+
+    ctx.show_viewport_immediate(viewport_id, builder, |ctx, class| {
+        if ctx.input(|input| input.viewport().close_requested()) {
+            close_requested = true;
+        }
+
+        CentralPanel::default()
+            .frame(Frame::none().fill(Color32::from_rgb(18, 20, 24)))
+            .show(ctx, |ui| {
+                let content = |ui: &mut Ui| {
+                    ui.add_space(10.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                        for zone in ALL_ZONES {
+                            let mut enabled = app.zones.contains(&zone);
+                            let is_last_enabled = enabled && app.zones.len() == 1;
+                            let response = ui
+                                .add_enabled_ui(!is_last_enabled, |ui| {
+                                    ui.add_sized(
+                                        vec2(50.0, 28.0),
+                                        egui::Checkbox::new(&mut enabled, zone.label()),
+                                    )
+                                })
+                                .inner;
+                            if response.changed() {
+                                changed_zones.push((zone, enabled));
+                            }
+                        }
+                    });
+                    ui.add_space(12.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add_sized(vec2(56.0, 26.0), Button::new("关闭")).clicked() {
+                            close_requested = true;
+                        }
+                    });
+                };
+
+                if class == ViewportClass::Embedded {
+                    egui::Window::new("设置")
+                        .collapsible(false)
+                        .resizable(false)
+                        .show(ctx, content);
+                } else {
+                    Frame::none()
+                        .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+                        .show(ui, content);
+                }
+            });
+    });
+
+    for (zone, enabled) in changed_zones {
+        app.set_zone_enabled(zone, enabled);
+    }
+
+    if close_requested {
+        app.settings_open = false;
+        ctx.send_viewport_cmd_to(viewport_id, ViewportCommand::Close);
+    }
+}
+
 fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
-    let size = vec2(56.0, 56.0);
+    let size = vec2(62.0, 62.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
     let center = rect.center();
-    let radius = 20.0;
+    let radius = 23.0;
     painter.circle_filled(center, radius + 3.0, Color32::from_rgb(9, 11, 14));
     painter.circle_stroke(center, radius + 4.0, Stroke::new(1.0, Color32::from_rgb(66, 72, 82)));
     painter.circle_filled(center, radius, app.f0_color.color32());
@@ -477,7 +677,7 @@ fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
                 app.f0_color = rgb;
                 app.mark_settings_dirty();
                 app.persist_settings_if_due(true);
-                app.write_f0(app.f0_color);
+                app.write_selected_color(app.f0_color);
             }
             Ok(None) => {}
             Err(err) => {
@@ -611,22 +811,24 @@ fn service_loop(settings_path: PathBuf) -> ! {
     let writer = LedWriter::new();
     let mut phase = 0.0_f32;
     let mut last_static_color: Option<Rgb> = None;
+    let mut last_static_zones: Vec<ZoneId> = Vec::new();
 
     loop {
         let settings = load_settings(&settings_path);
         if settings.mode == Mode::Custom {
-            if last_static_color != Some(settings.f0_color) {
-                let _ = writer.write(&[ZoneColor {
-                    zone: ZoneId::F0,
-                    rgb: settings.f0_color,
-                }]);
+            let zones = normalize_zones(&settings.zones);
+            if last_static_color != Some(settings.f0_color) || last_static_zones != zones {
+                let colors = colors_for_mode(Mode::Custom, 0.0, &settings);
+                let _ = writer.write(&colors);
                 last_static_color = Some(settings.f0_color);
+                last_static_zones = zones;
             }
             thread::sleep(Duration::from_millis(180));
             continue;
         }
 
         last_static_color = None;
+        last_static_zones.clear();
         if settings.running {
             phase = (phase + 0.0015 * settings.speed as f32).fract();
             let colors = colors_for_mode(settings.mode, phase, &settings);
@@ -642,33 +844,40 @@ fn service_loop(settings_path: PathBuf) -> ! {
 
 fn colors_for_mode(mode: Mode, phase: f32, settings: &Settings) -> Vec<ZoneColor> {
     let brightness = settings.brightness as f32 / 100.0;
+    let zones = normalize_zones(&settings.zones);
     match mode {
-        Mode::Custom => vec![ZoneColor {
-            zone: ZoneId::F0,
-            rgb: settings.f0_color,
-        }],
+        Mode::Custom => zones
+            .into_iter()
+            .map(|zone| ZoneColor {
+                zone,
+                rgb: settings.f0_color,
+            })
+            .collect(),
         Mode::Cycle => {
             let rgb = hsv_rgb(phase, 1.0, brightness);
-            BASE_ZONES
+            zones
                 .into_iter()
                 .map(|zone| ZoneColor { zone, rgb })
                 .collect()
         }
-        Mode::Chase => BASE_ZONES
+        Mode::Chase => {
+            let zone_count = zones.len().max(1) as f32;
+            zones
             .into_iter()
             .enumerate()
             .map(|(index, zone)| ZoneColor {
                 zone,
-                rgb: hsv_rgb(phase + index as f32 / 3.0, 1.0, brightness),
+                rgb: hsv_rgb(phase + index as f32 / zone_count, 1.0, brightness),
             })
-            .collect(),
+            .collect()
+        }
         Mode::Blink => {
             let rgb = if (phase * 10.0) as i32 % 2 == 0 {
                 scale_rgb(settings.f0_color, brightness)
             } else {
                 Rgb::BLACK
             };
-            BASE_ZONES
+            zones
                 .into_iter()
                 .map(|zone| ZoneColor { zone, rgb })
                 .collect()
@@ -676,7 +885,7 @@ fn colors_for_mode(mode: Mode, phase: f32, settings: &Settings) -> Vec<ZoneColor
         Mode::Breathing => {
             let pulse = 0.12 + 0.88 * ((phase * std::f32::consts::TAU).sin() + 1.0) / 2.0;
             let rgb = scale_rgb(settings.f0_color, pulse * brightness);
-            BASE_ZONES
+            zones
                 .into_iter()
                 .map(|zone| ZoneColor { zone, rgb })
                 .collect()
@@ -765,9 +974,9 @@ fn main() -> eframe::Result {
     let settings = load_settings(&settings_path);
     ensure_service_running();
     let mut viewport = ViewportBuilder::default()
-        .with_inner_size([430.0, 130.0])
-        .with_min_inner_size([430.0, 130.0])
-        .with_max_inner_size([430.0, 130.0])
+        .with_inner_size([432.0, 134.0])
+        .with_min_inner_size([432.0, 134.0])
+        .with_max_inner_size([432.0, 134.0])
         .with_decorations(false)
         .with_resizable(false);
 
@@ -840,6 +1049,7 @@ mod tests {
             brightness: 64,
             running: true,
             f0_color: Rgb { r: 12, g: 34, b: 56 },
+            zones: vec![ZoneId::F0, ZoneId::F3, ZoneId::F6],
             window_pos: Some([100.0, 200.0]),
         };
 
@@ -851,6 +1061,7 @@ mod tests {
         assert_eq!(parsed.brightness, 64);
         assert!(parsed.running);
         assert_eq!(parsed.f0_color, Rgb { r: 12, g: 34, b: 56 });
+        assert_eq!(parsed.zones, vec![ZoneId::F0, ZoneId::F3, ZoneId::F6]);
         assert_eq!(parsed.window_pos, Some([100.0, 200.0]));
     }
 
@@ -862,6 +1073,7 @@ mod tests {
             brightness: 0,
             running: true,
             f0_color: Rgb::WHITE,
+            zones: Vec::new(),
             window_pos: Some([f32::NAN, 10.0]),
         }
         .sanitized();
@@ -869,6 +1081,7 @@ mod tests {
         assert_eq!(settings.speed, 1);
         assert_eq!(settings.brightness, 1);
         assert!(!settings.running);
+        assert_eq!(settings.zones, default_zones());
         assert_eq!(settings.window_pos, None);
     }
 
@@ -893,6 +1106,7 @@ mod tests {
             brightness: 100,
             running: true,
             f0_color: Rgb::WHITE,
+            zones: default_zones(),
             window_pos: None,
         };
 
@@ -902,5 +1116,25 @@ mod tests {
         assert_eq!(colors[0].zone, ZoneId::F0);
         assert_eq!(colors[1].zone, ZoneId::F1);
         assert_eq!(colors[2].zone, ZoneId::F2);
+    }
+
+    #[test]
+    fn service_uses_selected_zones() {
+        let settings = Settings {
+            mode: Mode::Cycle,
+            speed: 50,
+            brightness: 100,
+            running: true,
+            f0_color: Rgb::WHITE,
+            zones: vec![ZoneId::F0, ZoneId::F4, ZoneId::F6],
+            window_pos: None,
+        };
+
+        let zones = colors_for_mode(Mode::Cycle, 0.0, &settings)
+            .into_iter()
+            .map(|color| color.zone)
+            .collect::<Vec<_>>();
+
+        assert_eq!(zones, vec![ZoneId::F0, ZoneId::F4, ZoneId::F6]);
     }
 }

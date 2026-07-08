@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=蓝天系键盘 ARGB
+Name=Clevo Keyboard LED
 Comment=Clevo/Insyde keyboard RGB controller
-Exec=/home/qcqcqc/clevo-keyboard-led-linux/app/run-clevo-led-gui.sh
+Exec=clevo-keyboard-led
 Icon=preferences-desktop-keyboard
 Terminal=false
 Categories=Settings;HardwareSettings;

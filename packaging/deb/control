@@ -1,0 +1,12 @@
+Package: clevo-keyboard-led
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Clevo Keyboard LED Maintainers <root@localhost>
+Depends: libc6, zenity | kdialog
+Recommends: pkexec, make, linux-headers-amd64
+Description: Clevo/Insyde keyboard RGB controller
+ Rust GUI and background service for Clevo/Insyde keyboard RGB control.
+ The package includes the kernel module source and tries to build it for
+ the running kernel during installation when headers are available.

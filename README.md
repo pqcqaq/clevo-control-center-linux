@@ -79,6 +79,54 @@ cargo build --release
 target/release/clevo-keyboard-led
 ```
 
+## 打包和安装
+
+通用 Linux 包：
+
+```bash
+scripts/package-tar.sh
+```
+
+输出示例：
+
+```text
+dist/clevo-keyboard-led-0.1.0-linux-x86_64.tar.gz
+```
+
+安装通用包：
+
+```bash
+tar -xf dist/clevo-keyboard-led-0.1.0-linux-x86_64.tar.gz -C /tmp
+/tmp/clevo-keyboard-led-0.1.0-linux-x86_64/install.sh
+```
+
+默认安装到：
+
+- 程序目录：`~/.local/lib/clevo-keyboard-led`
+- 命令入口：`~/.local/bin/clevo-keyboard-led`
+- 桌面入口：`~/.local/share/applications/clevo-keyboard-led.desktop`
+
+卸载通用包：
+
+```bash
+/tmp/clevo-keyboard-led-0.1.0-linux-x86_64/install.sh uninstall
+```
+
+Debian/Ubuntu 包：
+
+```bash
+scripts/package-deb.sh
+sudo apt install ./dist/clevo-keyboard-led_0.1.0_amd64.deb
+```
+
+`.deb` 会安装：
+
+- `/usr/bin/clevo-keyboard-led`
+- `/usr/lib/clevo-keyboard-led/`
+- `/usr/share/applications/clevo-keyboard-led.desktop`
+
+内核模块不能跨内核通用分发。安装脚本和 `.deb` 会携带模块源码，并在目标机器存在当前内核 headers 时尝试本机编译和加载模块。
+
 ## 加载内核模块
 
 ```bash
@@ -118,11 +166,12 @@ scripts/run-gui.sh
 
 GUI 布局：
 
-- 左侧：`f0` 圆形色块，自定义模式下点击可打开系统调色盘
+- 左上角：logo 菜单，打开后可进入设置窗口选择生效分区
+- 左侧：圆形色块，自定义模式下点击可打开系统调色盘，并写入设置中选中的分区
 - 中间：模式下拉框、速度滑块、亮度滑块
 - 右侧：开始/结束按钮
 
-自定义模式下开始按钮、速度、亮度不可用；选色后会直接写入 `f0`。
+自定义模式下开始按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`，设置窗口可选择 `f0-f6`。
 
 普通启动 GUI 时，程序会自动拉起后台服务。后台服务持续读取 `settings.json` 并执行动态灯效，因此关闭 GUI 后灯效仍会继续。
 
@@ -142,7 +191,7 @@ scripts/stop-service.sh
 
 以下文件会生成在项目运行目录，并已加入 `.gitignore`：
 
-- `settings.json`：模式、速度、亮度、颜色、运行状态、窗口位置
+- `settings.json`：模式、速度、亮度、颜色、生效分区、运行状态、窗口位置
 - `clevo-keyboard-led.pid`：后台服务进程号
 - `clevo-keyboard-led.service.log`：后台服务错误日志
 
@@ -154,7 +203,7 @@ scripts/stop-service.sh
 app/clevo-keyboard-led.desktop
 ```
 
-安装或刷新桌面入口：
+通用安装脚本和 `.deb` 会自动安装并刷新桌面入口。手动调试时也可以复制：
 
 ```bash
 cp app/clevo-keyboard-led.desktop ~/.local/share/applications/

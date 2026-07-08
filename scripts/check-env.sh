@@ -21,6 +21,12 @@ check_cmd rustc
 check_cmd make
 check_cmd pkexec
 
+if command -v dpkg-deb >/dev/null 2>&1; then
+    printf '[ok] dpkg-deb: %s\n' "$(command -v dpkg-deb)"
+else
+    printf '[warn] dpkg-deb not found; .deb packaging will be unavailable\n'
+fi
+
 if command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1; then
     printf '[ok] color picker: '
     command -v zenity 2>/dev/null || command -v kdialog

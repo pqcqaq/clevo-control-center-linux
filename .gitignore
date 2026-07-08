@@ -8,6 +8,10 @@
 /clevo-keyboard-led.service.log
 /*.log
 
+# Packaging output
+/dist/
+/packaging/deb/build/
+
 # Kernel module build output
 /module/*.ko
 /module/*.o
