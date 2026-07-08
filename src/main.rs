@@ -222,8 +222,6 @@ struct ClevoLedApp {
     speed: u8,
     brightness: u8,
     running: bool,
-    phase: f32,
-    last_tick: Instant,
     f0_color: Rgb,
     last_error: Option<String>,
     window_pos: Option<[f32; 2]>,
@@ -245,8 +243,6 @@ impl ClevoLedApp {
             speed: settings.speed,
             brightness: settings.brightness,
             running: settings.running,
-            phase: 0.0,
-            last_tick: Instant::now(),
             f0_color: settings.f0_color,
             last_error: None,
             window_pos: settings.window_pos,
@@ -261,7 +257,6 @@ impl ClevoLedApp {
         }
 
         self.running = !self.running;
-        self.last_tick = Instant::now();
         self.mark_settings_dirty();
         self.persist_settings_if_due(true);
     }
