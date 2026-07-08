@@ -1,9 +1,9 @@
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{self, Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use eframe::egui::{
     self, pos2, vec2, Align2, Area, Button, CentralPanel, Color32, ComboBox, Context,
@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_PROC_PATH: &str = "/proc/clevo_kbd_led";
 const SETTINGS_FILE: &str = "settings.json";
 const SERVICE_PID_FILE: &str = "clevo-keyboard-led.pid";
+const SERVICE_LOCK_FILE: &str = "clevo-keyboard-led.lock";
 const SERVICE_LOG_FILE: &str = "clevo-keyboard-led.service.log";
 const BASE_ZONES: [ZoneId; 3] = [ZoneId::F0, ZoneId::F1, ZoneId::F2];
 const ALL_ZONES: [ZoneId; 7] = [
@@ -241,6 +242,10 @@ fn load_settings(path: &Path) -> Settings {
     }
 }
 
+fn file_modified(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
+}
+
 fn atomic_write_settings(path: &Path, settings: &Settings) -> io::Result<()> {
     let json = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
     let tmp_path = path.with_extension("json.tmp");
@@ -267,6 +272,7 @@ fn commands_for_colors(colors: &[ZoneColor]) -> Vec<String> {
 struct ClevoLedApp {
     writer: LedWriter,
     settings_path: PathBuf,
+    settings_mtime: Option<SystemTime>,
     mode: Mode,
     speed: u8,
     brightness: u8,
@@ -278,6 +284,7 @@ struct ClevoLedApp {
     last_error: Option<String>,
     window_pos: Option<[f32; 2]>,
     dirty_settings: bool,
+    dirty_window_position: bool,
     last_settings_save: Instant,
 }
 
@@ -287,10 +294,12 @@ impl ClevoLedApp {
         if !writer.ready() {
             eprintln!("Keyboard LED interface is not writable: {}", writer.proc_path().display());
         }
+        let settings_mtime = file_modified(&settings_path);
 
         Self {
             writer,
             settings_path,
+            settings_mtime,
             mode: settings.mode,
             speed: settings.speed,
             brightness: settings.brightness,
@@ -302,6 +311,7 @@ impl ClevoLedApp {
             last_error: None,
             window_pos: settings.window_pos,
             dirty_settings: false,
+            dirty_window_position: false,
             last_settings_save: Instant::now(),
         }
     }
@@ -354,6 +364,30 @@ impl ClevoLedApp {
         self.dirty_settings = true;
     }
 
+    fn apply_external_settings(&mut self, settings: Settings) {
+        self.mode = settings.mode;
+        self.speed = settings.speed;
+        self.brightness = settings.brightness;
+        self.running = settings.running;
+        self.f0_color = settings.f0_color;
+        self.zones = settings.zones;
+    }
+
+    fn sync_external_settings(&mut self) {
+        if self.dirty_settings {
+            return;
+        }
+
+        let mtime = file_modified(&self.settings_path);
+        if mtime.is_none() || mtime == self.settings_mtime {
+            return;
+        }
+
+        let settings = load_settings(&self.settings_path);
+        self.apply_external_settings(settings);
+        self.settings_mtime = mtime;
+    }
+
     fn update_window_position(&mut self, ctx: &Context) {
         let position = ctx.input(|input| {
             input
@@ -372,13 +406,13 @@ impl ClevoLedApp {
                 .unwrap_or(true);
             if changed {
                 self.window_pos = Some(position);
-                self.mark_settings_dirty();
+                self.dirty_window_position = true;
             }
         }
     }
 
     fn persist_settings_if_due(&mut self, force: bool) {
-        if !self.dirty_settings && !force {
+        if !self.dirty_settings && !self.dirty_window_position && !force {
             return;
         }
         if !force && self.last_settings_save.elapsed() < Duration::from_millis(700) {
@@ -388,15 +422,24 @@ impl ClevoLedApp {
     }
 
     fn persist_settings(&mut self) {
-        let settings = Settings {
-            mode: self.mode,
-            speed: self.speed,
-            brightness: self.brightness,
-            running: self.running && self.mode != Mode::Custom,
-            f0_color: self.f0_color,
-            zones: self.selected_zones(),
-            window_pos: self.window_pos,
+        let mut settings = if self.dirty_settings {
+            Settings {
+                mode: self.mode,
+                speed: self.speed,
+                brightness: self.brightness,
+                running: self.running && self.mode != Mode::Custom,
+                f0_color: self.f0_color,
+                zones: self.selected_zones(),
+                window_pos: self.window_pos,
+            }
+        } else {
+            load_settings(&self.settings_path)
         };
+
+        settings.window_pos = self.window_pos;
+        settings = settings.sanitized();
+
+        let should_apply_local_state = self.dirty_settings;
 
         match serde_json::to_string_pretty(&settings)
             .map_err(io::Error::other)
@@ -404,7 +447,12 @@ impl ClevoLedApp {
         {
             Ok(()) => {
                 self.dirty_settings = false;
+                self.dirty_window_position = false;
                 self.last_settings_save = Instant::now();
+                self.settings_mtime = file_modified(&self.settings_path);
+                if !should_apply_local_state {
+                    self.apply_external_settings(settings);
+                }
             }
             Err(err) => {
                 eprintln!("Failed to write {}: {err}", self.settings_path.display());
@@ -412,10 +460,12 @@ impl ClevoLedApp {
             }
         }
     }
+
 }
 
 impl eframe::App for ClevoLedApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.sync_external_settings();
         self.update_window_position(ctx);
 
         CentralPanel::default()
@@ -761,13 +811,8 @@ fn parse_hex_rgb(hex: &str) -> Option<Rgb> {
 }
 
 fn ensure_service_running() {
-    let pid_path = PathBuf::from(SERVICE_PID_FILE);
-    if let Ok(pid_text) = fs::read_to_string(&pid_path) {
-        if let Ok(pid) = pid_text.trim().parse::<u32>() {
-            if process_is_running(pid) {
-                return;
-            }
-        }
+    if active_service_pid().is_some() {
+        return;
     }
 
     let exe = match std::env::current_exe() {
@@ -794,20 +839,88 @@ fn ensure_service_running() {
         .stderr(stderr)
         .spawn()
     {
-        Ok(child) => {
-            if let Err(err) = fs::write(pid_path, format!("{}\n", child.id())) {
-                eprintln!("Failed to write service pid file: {err}");
-            }
-        }
+        Ok(_child) => {}
         Err(err) => eprintln!("Failed to start LED service: {err}"),
     }
+}
+
+fn service_pid() -> Option<u32> {
+    read_pid_file(Path::new(SERVICE_PID_FILE))
+}
+
+fn read_pid_file(path: &Path) -> Option<u32> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|pid_text| pid_text.trim().parse::<u32>().ok())
 }
 
 fn process_is_running(pid: u32) -> bool {
     PathBuf::from(format!("/proc/{pid}")).exists()
 }
 
+fn active_service_pid() -> Option<u32> {
+    service_pid()
+        .filter(|pid| process_is_running(*pid))
+        .or_else(|| {
+            read_pid_file(Path::new(SERVICE_LOCK_FILE)).filter(|pid| process_is_running(*pid))
+        })
+}
+
+struct ServiceLock {
+    path: PathBuf,
+}
+
+impl ServiceLock {
+    fn acquire() -> io::Result<Option<Self>> {
+        let path = PathBuf::from(SERVICE_LOCK_FILE);
+        for _ in 0..3 {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    writeln!(file, "{}", process::id())?;
+                    fs::write(SERVICE_PID_FILE, format!("{}\n", process::id()))?;
+                    return Ok(Some(Self { path }));
+                }
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    thread::sleep(Duration::from_millis(50));
+                    if active_service_pid().is_some() {
+                        return Ok(None);
+                    }
+                    let _ = fs::remove_file(&path);
+                    let _ = fs::remove_file(SERVICE_PID_FILE);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        if active_service_pid().is_some() {
+            Ok(None)
+        } else {
+            Err(io::Error::new(io::ErrorKind::AlreadyExists, "stale service lock"))
+        }
+    }
+}
+
+impl Drop for ServiceLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(SERVICE_PID_FILE);
+    }
+}
+
 fn service_loop(settings_path: PathBuf) -> ! {
+    let _lock = match ServiceLock::acquire() {
+        Ok(Some(lock)) => lock,
+        Ok(None) => process::exit(0),
+        Err(err) => {
+            eprintln!("Failed to acquire service lock: {err}");
+            process::exit(1);
+        }
+    };
+
     let writer = LedWriter::new();
     let mut phase = 0.0_f32;
     let mut last_static_color: Option<Rgb> = None;

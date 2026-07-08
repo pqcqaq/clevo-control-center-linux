@@ -7,7 +7,7 @@
 - `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露 `/proc/clevo_kbd_led`
 - `src/`：Rust 程序，同一个二进制同时提供前台 GUI 和后台灯效服务
 
-GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。
+GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。后台服务通过运行目录中的锁文件保持单例，多个 GUI 窗口共享同一个 `settings.json` 状态。
 
 ## 硬件接口
 
@@ -176,7 +176,9 @@ GUI 布局：
 
 自定义模式下开始按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`，设置窗口可选择 `f0-f6`。
 
-普通启动 GUI 时，程序会自动拉起后台服务。后台服务持续读取 `settings.json` 并执行动态灯效，因此关闭 GUI 后灯效仍会继续。
+普通启动 GUI 时，程序会自动拉起后台服务。后台服务通过 `clevo-keyboard-led.lock` 和 `clevo-keyboard-led.pid` 保持单例，并持续读取 `settings.json` 执行动态灯效，因此关闭 GUI 后灯效仍会继续。
+
+可以同时打开多个 GUI 窗口。每个窗口都会把操作写入同一个 `settings.json`，并自动读取其他窗口保存的设置变化。
 
 手动启动后台服务：
 
@@ -196,6 +198,7 @@ scripts/stop-service.sh
 
 - `settings.json`：模式、速度、亮度、颜色、生效分区、运行状态、窗口位置
 - `clevo-keyboard-led.pid`：后台服务进程号
+- `clevo-keyboard-led.lock`：后台服务单例锁
 - `clevo-keyboard-led.service.log`：后台服务错误日志
 
 ## 桌面启动器

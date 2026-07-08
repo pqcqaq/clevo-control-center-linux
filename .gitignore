@@ -5,6 +5,7 @@
 /settings.json
 /settings.json.tmp
 /clevo-keyboard-led.pid
+/clevo-keyboard-led.lock
 /clevo-keyboard-led.service.log
 /*.log
 
