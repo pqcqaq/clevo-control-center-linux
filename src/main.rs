@@ -523,6 +523,7 @@ fn print_dchu_usage() {
     println!("  clevo-keyboard-led dchu raw-get <function>");
     println!("  clevo-keyboard-led dchu raw-set <function> <hex-bytes> --i-understand");
     println!("  clevo-keyboard-led dchu raw-set-dword <function> <u32> --i-understand");
+    println!("  clevo-keyboard-led dchu kbd-brightness <0..9> --i-understand");
     println!("  clevo-keyboard-led dchu fan-curve-set <30-or-32-hex-bytes> --i-understand");
     println!("  clevo-keyboard-led dchu power-mode <0..3> --i-understand");
 }
@@ -559,6 +560,20 @@ fn run_dchu_cli(args: &[String]) -> Result<(), String> {
             let value = args.get(2).ok_or("raw-set-dword requires <u32>")?;
             let bytes = parse_u32_arg(value)?.to_le_bytes();
             print_dchu_raw(dchu_query(parse_u32_arg(function)?, Some(&bytes))?);
+        }
+        "kbd-brightness" => {
+            require_danger_flag(args)?;
+            let level = args
+                .get(1)
+                .ok_or("kbd-brightness requires <0..9>")?
+                .parse::<u32>()
+                .map_err(|_| "keyboard brightness must be 0..9".to_owned())?;
+            if level > 9 {
+                return Err("keyboard brightness must be 0..9".to_owned());
+            }
+            let payload = (0x0d_u32 << 28) | (level << 12);
+            println!("writing SCMD 0x67 brightness payload 0x{payload:08x}");
+            print_dchu_raw(dchu_query(0x67, Some(&payload.to_le_bytes()))?);
         }
         "fan-curve-set" => {
             require_danger_flag(args)?;
