@@ -84,3 +84,36 @@
 | Linux 上没有现成 Clevo/Tuxedo sysfs 接口 | 转向 ACPI `_DSM` 路径定位 |
 | `acpidump`、`iasl` 未安装 | 下一步评估并安装 `acpica-tools` |
 | `acpi_call-dkms` 不能构造 package 输入 | 不用它直接测试 `_DSM`，改写专用模块 |
+
+## DCHU 风扇与电源接口追加发现
+- 进一步反编译 `D:\ColorfulLedKeyboardSet\InsydeDCHU.dll` 后确认：
+  - `GetDCHU_Data_Integer(int command, int *out)` 成功时返回写入的整数值，失败返回 0。
+  - `GetDCHU_Data_Buffer(int command, uint8_t *out)` 只有 2 个有效参数；成功时返回 command 本身，失败返回 0。
+  - `SetDCHU_DataEx(int command, uint8_t *input, int input_len, uint8_t *out)` 可取回 ACPI buffer 返回值。
+- Windows 当前环境调用 `GetDCHU_Data_Buffer(0x0D)` 返回 0，说明本机 DeviceIoControl 没拿到 DCHU 返回，不把这次 Windows 返回当作硬件数据。
+- 远端 Linux 上临时编译只读 probe 模块，调用 `\_SB.DCHU._DSM`，只读确认如下：
+  - `0x0C` 返回 256 字节 buffer，包含 `RPM1/RPM2/RPM3` 等实时状态字段。一次样本：`RPM1=0x026e`、`RPM2=0x02be`、`RPM3=0x0000`。
+  - `0x0D` 返回 256 字节 buffer，包含键盘颜色、`FANQ`、`KBTP` 和三组风扇曲线表。一次样本：`FANQ=0x02`、`KBTP=0x06`。
+  - `0x10` 返回 integer `0x93`，对应 DSDT 中 `PSF5` 能力掩码结果。
+  - `0x52` 返回 integer `0x04680025`，对应 `PSF1`。
+  - `0x60` 返回 integer `0x021c`，对应 `PSF4` 加运行时状态位。
+  - `0x7A` 返回 integer `0x70020053`，对应 `PSF2` 加平台能力位。
+- DSDT 中 `PK0D` 的 `0x0D` buffer 关键偏移：
+  - `0x02..0x0A`：键盘三分区当前 RGB，顺序为 left/middle/right 的 R/G/B。
+  - `0x0B`：键盘亮度 `KBBH`。
+  - `0x0C`：`FANQ`。
+  - `0x0E`：执行 `FCMD=0xD7` 后读出的 `FBUF`。
+  - `0x0F`：`KBTP`。
+  - `0x10..0x17`：Fan1 的 `T1/D1/T2/D2/T3/D3/T4/D4`。
+  - `0x18..0x1F`：Fan2 的 `T1/D1/T2/D2/T3/D3/T4/D4`。
+  - `0x20..0x27`：Fan3 的 `T1/D1/T2/D2/T3/D3/T4/D4`。
+  - `0x2B`：`KPCR`。
+- DSDT 中 `PK0E` 是风扇曲线写入口，属于写 EC 的危险接口，暂未调用：
+  - 输入 buffer `0x02..0x0D` 写 Fan1/Fan2/Fan3 的 `T2/D2/T3/D3`。
+  - 输入 buffer `0x0E..0x1F` 按 little-endian word 写 `F1R1..F3R3`。
+  - 固件返回固定整数 `0x14`。
+- DSDT 中 `SCMD(0x79)` 是电源/性能相关写入口，暂未调用：
+  - payload 仍是首个 DWORD，`sub = payload >> 24`，`value = payload & 0x00ffffff`。
+  - `sub=0x19` 且 `value & 0x3f < 4` 时会设置 `EC.CPCM`、`EC.APRD`、`EC.FCMD=0xD8`，并触发 `PRM0=0x11; PRM1=mode; SSMP=0xC0`。
+  - `APPM` 映射表为 `[0x02, 0x03, 0x01, 0x00]`，说明 0..3 四个性能档位会映射为不同 EC 参数，但还不能直接命名为静音/娱乐/性能等，需要和原厂控制中心 UI 或实际行为再对照。
+- 后续如果要实现风扇/电源功能，建议先做只读 CLI/debug 接口展示 `0x0C/0x0D`，写接口必须二次确认并加显式风险开关，不应直接放进 GUI 默认功能。
