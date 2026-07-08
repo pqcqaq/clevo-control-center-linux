@@ -2,7 +2,6 @@
 set -euo pipefail
 
 APP_ID="clevo-control-center"
-LEGACY_APP_ID="clevo-keyboard-led"
 PREFIX="${PREFIX:-$HOME/.local}"
 LIB_DIR="${LIB_DIR:-$PREFIX/lib/$APP_ID}"
 BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
@@ -29,13 +28,7 @@ exec "$LIB_DIR/$APP_ID" "\$@"
 EOF
     chmod 0755 "$BIN_DIR/$APP_ID"
 
-    cat > "$BIN_DIR/$LEGACY_APP_ID" <<EOF
-#!/usr/bin/env bash
-exec "$BIN_DIR/$APP_ID" "\$@"
-EOF
-    chmod 0755 "$BIN_DIR/$LEGACY_APP_ID"
-
-    rm -f "$DESKTOP_DIR/$LEGACY_APP_ID.desktop"
+    rm -f "$BIN_DIR/clevo-keyboard-led" "$DESKTOP_DIR/clevo-keyboard-led.desktop"
     sed "s#^Exec=.*#Exec=$BIN_DIR/$APP_ID#" "$ROOT_DIR/app/$APP_ID.desktop" > "$DESKTOP_DIR/$APP_ID.desktop"
     chmod 0644 "$DESKTOP_DIR/$APP_ID.desktop"
     if command -v update-desktop-database >/dev/null 2>&1; then
@@ -73,7 +66,7 @@ install_module() {
 }
 
 uninstall_app() {
-    rm -f "$BIN_DIR/$APP_ID" "$BIN_DIR/$LEGACY_APP_ID" "$DESKTOP_DIR/$APP_ID.desktop" "$DESKTOP_DIR/$LEGACY_APP_ID.desktop"
+    rm -f "$BIN_DIR/$APP_ID" "$BIN_DIR/clevo-keyboard-led" "$DESKTOP_DIR/$APP_ID.desktop" "$DESKTOP_DIR/clevo-keyboard-led.desktop"
     rm -rf "$LIB_DIR"
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true

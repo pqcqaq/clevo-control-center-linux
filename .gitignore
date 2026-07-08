@@ -4,9 +4,9 @@
 # Runtime state
 /settings.json
 /settings.json.tmp
-/clevo-keyboard-led.pid
-/clevo-keyboard-led.lock
-/clevo-keyboard-led.service.log
+/clevo-control-center.pid
+/clevo-control-center.lock
+/clevo-control-center.service.log
 /*.log
 
 # Packaging output
@@ -33,4 +33,4 @@
 Thumbs.db
 
 # Legacy Python prototype
-/app/clevo_keyboard_led_gui.py
+/app/clevo_control_center_gui.py

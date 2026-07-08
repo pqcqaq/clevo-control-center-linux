@@ -8,8 +8,4 @@ if [[ -x target/release/clevo-control-center ]]; then
     exec target/release/clevo-control-center "$@"
 fi
 
-if [[ -x target/release/clevo-keyboard-led ]]; then
-    exec target/release/clevo-keyboard-led "$@"
-fi
-
 exec cargo run -- "$@"

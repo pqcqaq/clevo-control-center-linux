@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_ID="clevo-control-center"
-LEGACY_APP_ID="clevo-keyboard-led"
 VERSION="$(grep -m1 '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"
 DEB_ARCH="${DEB_ARCH:-amd64}"
 BUILD_DIR="$ROOT_DIR/dist/deb/$APP_ID"
@@ -37,12 +36,6 @@ cd /usr/lib/$APP_ID
 exec /usr/lib/$APP_ID/$APP_ID "\$@"
 EOF
 chmod 0755 "$BUILD_DIR/usr/bin/$APP_ID"
-
-cat > "$BUILD_DIR/usr/bin/$LEGACY_APP_ID" <<EOF
-#!/usr/bin/env bash
-exec /usr/bin/$APP_ID "\$@"
-EOF
-chmod 0755 "$BUILD_DIR/usr/bin/$LEGACY_APP_ID"
 
 sed "s#^Exec=.*#Exec=/usr/bin/$APP_ID#" "app/$APP_ID.desktop" > "$BUILD_DIR/usr/share/applications/$APP_ID.desktop"
 chmod 0644 "$BUILD_DIR/usr/share/applications/$APP_ID.desktop"

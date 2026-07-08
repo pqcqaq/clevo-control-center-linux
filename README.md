@@ -109,7 +109,6 @@ tar -xf dist/clevo-control-center-0.1.0-linux-x86_64.tar.gz -C /tmp
 
 - 程序目录：`~/.local/lib/clevo-control-center`
 - 命令入口：`~/.local/bin/clevo-control-center`
-- 兼容入口：`~/.local/bin/clevo-keyboard-led`
 - 桌面入口：`~/.local/share/applications/clevo-control-center.desktop`
 
 卸载通用包：
@@ -128,7 +127,6 @@ sudo apt install ./dist/clevo-control-center_0.1.0_amd64.deb
 `.deb` 会安装：
 
 - `/usr/bin/clevo-control-center`
-- `/usr/bin/clevo-keyboard-led` 兼容入口
 - `/usr/lib/clevo-control-center/`
 - `/usr/share/applications/clevo-control-center.desktop`
 
