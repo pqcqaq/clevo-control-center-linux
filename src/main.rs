@@ -73,7 +73,6 @@ struct Rgb {
 }
 
 impl Rgb {
-    const BLACK: Self = Self { r: 0, g: 0, b: 0 };
     const WHITE: Self = Self {
         r: 255,
         g: 255,
@@ -1001,6 +1000,7 @@ fn service_loop(settings_path: PathBuf) -> ! {
 
     let writer = LedWriter::new();
     let mut phase = 0.0_f32;
+    let mut last_frame = Instant::now();
     let mut last_static_color: Option<Rgb> = None;
     let mut last_static_zones: Vec<ZoneId> = Vec::new();
 
@@ -1021,13 +1021,17 @@ fn service_loop(settings_path: PathBuf) -> ! {
         last_static_color = None;
         last_static_zones.clear();
         if settings.running {
-            phase = (phase + 0.0015 * settings.speed as f32).fract();
+            let now = Instant::now();
+            let dt = now.duration_since(last_frame).as_secs_f32().min(0.2);
+            last_frame = now;
+            phase = (phase + dt * cycles_per_second(settings.speed)).fract();
             let colors = colors_for_mode(settings.mode, phase, &settings);
             if let Err(err) = writer.write(&colors) {
                 eprintln!("LED service write failed: {err}");
             }
             thread::sleep(tick_interval(settings.speed));
         } else {
+            last_frame = Instant::now();
             thread::sleep(Duration::from_millis(180));
         }
     }
@@ -1063,11 +1067,17 @@ fn colors_for_mode(mode: Mode, phase: f32, settings: &Settings) -> Vec<ZoneColor
             .collect()
         }
         Mode::Blink => {
-            let rgb = if (phase * 10.0) as i32 % 2 == 0 {
-                scale_rgb(settings.f0_color, brightness)
+            let blink_phase = (phase * 5.0).fract();
+            let level = if blink_phase < 0.42 {
+                1.0
+            } else if blink_phase < 0.5 {
+                1.0 - smoothstep((blink_phase - 0.42) / 0.08)
+            } else if blink_phase < 0.92 {
+                0.0
             } else {
-                Rgb::BLACK
+                smoothstep((blink_phase - 0.92) / 0.08)
             };
+            let rgb = scale_rgb(settings.f0_color, brightness * level);
             zones
                 .into_iter()
                 .map(|zone| ZoneColor { zone, rgb })
@@ -1085,8 +1095,18 @@ fn colors_for_mode(mode: Mode, phase: f32, settings: &Settings) -> Vec<ZoneColor
 }
 
 fn tick_interval(speed: u8) -> Duration {
-    let millis = 180_u64.saturating_sub((speed as u64 * 135) / 100).max(25);
+    let millis = 28_u64.saturating_sub((speed as u64 * 12) / 100).max(16);
     Duration::from_millis(millis)
+}
+
+fn cycles_per_second(speed: u8) -> f32 {
+    let t = speed.clamp(1, 100) as f32 / 100.0;
+    0.035 + 0.42 * t.powf(1.35)
+}
+
+fn smoothstep(value: f32) -> f32 {
+    let t = value.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn scale_rgb(rgb: Rgb, factor: f32) -> Rgb {
@@ -1230,6 +1250,21 @@ mod tests {
     #[test]
     fn hsv_cycle_starts_at_red() {
         assert_eq!(hsv_rgb(0.0, 1.0, 1.0), Rgb { r: 255, g: 0, b: 0 });
+    }
+
+    #[test]
+    fn effect_timing_uses_fine_grained_steps() {
+        assert!(tick_interval(1) <= Duration::from_millis(28));
+        assert!(tick_interval(100) <= Duration::from_millis(16));
+        assert!(cycles_per_second(100) < 0.5);
+    }
+
+    #[test]
+    fn smoothstep_has_stable_edges() {
+        assert_eq!(smoothstep(-1.0), 0.0);
+        assert_eq!(smoothstep(0.0), 0.0);
+        assert_eq!(smoothstep(1.0), 1.0);
+        assert_eq!(smoothstep(2.0), 1.0);
     }
 
     #[test]
