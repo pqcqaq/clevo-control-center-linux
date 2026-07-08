@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Clevo Keyboard LED
-Comment=Clevo/Insyde keyboard RGB controller
-Exec=clevo-keyboard-led
-Icon=preferences-desktop-keyboard
-Terminal=false
-Categories=Settings;HardwareSettings;

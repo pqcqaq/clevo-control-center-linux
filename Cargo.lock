@@ -603,7 +603,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "clevo-keyboard-led"
+name = "clevo-control-center"
 version = "0.1.0"
 dependencies = [
  "eframe",

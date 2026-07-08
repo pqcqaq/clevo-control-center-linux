@@ -12,4 +12,4 @@ make -C module
 echo '[build] Rust GUI/service'
 cargo build --release
 
-echo '[done] target/release/clevo-keyboard-led'
+echo '[done] target/release/clevo-control-center'

@@ -14,11 +14,12 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_PROC_PATH: &str = "/proc/clevo_kbd_led";
 const DEFAULT_DCHU_PROC_PATH: &str = "/proc/clevo_dchu";
-const APP_ID: &str = "clevo-keyboard-led";
+const APP_ID: &str = "clevo-control-center";
+const LEGACY_APP_ID: &str = "clevo-keyboard-led";
 const SETTINGS_FILE: &str = "settings.json";
-const SERVICE_PID_FILE: &str = "clevo-keyboard-led.pid";
-const SERVICE_LOCK_FILE: &str = "clevo-keyboard-led.lock";
-const SERVICE_LOG_FILE: &str = "clevo-keyboard-led.service.log";
+const SERVICE_PID_FILE: &str = "clevo-control-center.pid";
+const SERVICE_LOCK_FILE: &str = "clevo-control-center.lock";
+const SERVICE_LOG_FILE: &str = "clevo-control-center.service.log";
 const BASE_ZONES: [ZoneId; 3] = [ZoneId::F0, ZoneId::F1, ZoneId::F2];
 const ALL_ZONES: [ZoneId; 7] = [
     ZoneId::F0,
@@ -288,12 +289,20 @@ fn migrate_legacy_settings(target: &Path) {
         return;
     }
 
-    let legacy = std::env::current_dir()
+    let legacy_config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config"))
+        .join(LEGACY_APP_ID)
+        .join(SETTINGS_FILE);
+    let legacy_cwd = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(SETTINGS_FILE);
-    if !legacy.exists() {
+    let legacy = [legacy_config, legacy_cwd]
+        .into_iter()
+        .find(|path| path.exists());
+    let Some(legacy) = legacy else {
         return;
-    }
+    };
 
     if let Some(parent) = target.parent() {
         let _ = fs::create_dir_all(parent);
@@ -517,16 +526,16 @@ fn require_danger_flag(args: &[String]) -> Result<(), String> {
 
 fn print_dchu_usage() {
     println!("Usage:");
-    println!("  clevo-keyboard-led dchu status");
-    println!("  clevo-keyboard-led dchu fan-table");
-    println!("  clevo-keyboard-led dchu caps");
-    println!("  clevo-keyboard-led dchu raw-get <function>");
-    println!("  clevo-keyboard-led dchu raw-set <function> <hex-bytes> --i-understand");
-    println!("  clevo-keyboard-led dchu raw-set-dword <function> <u32> --i-understand");
-    println!("  clevo-keyboard-led dchu kbd-brightness <0..9> --i-understand");
-    println!("  clevo-keyboard-led dchu fan-curve-set <30-or-32-hex-bytes> --i-understand");
-    println!("  clevo-keyboard-led dchu fan-mode <auto|max|silent|maxq|custom|turbo|0|1|3|5|6|7> --i-understand");
-    println!("  clevo-keyboard-led dchu power-mode <0..3> --i-understand");
+    println!("  clevo-control-center dchu status");
+    println!("  clevo-control-center dchu fan-table");
+    println!("  clevo-control-center dchu caps");
+    println!("  clevo-control-center dchu raw-get <function>");
+    println!("  clevo-control-center dchu raw-set <function> <hex-bytes> --i-understand");
+    println!("  clevo-control-center dchu raw-set-dword <function> <u32> --i-understand");
+    println!("  clevo-control-center dchu kbd-brightness <0..9> --i-understand");
+    println!("  clevo-control-center dchu fan-curve-set <30-or-32-hex-bytes> --i-understand");
+    println!("  clevo-control-center dchu fan-mode <auto|max|silent|maxq|custom|turbo|0|1|3|5|6|7> --i-understand");
+    println!("  clevo-control-center dchu power-mode <0..3> --i-understand");
 }
 
 fn parse_fan_mode(value: &str) -> Result<u32, String> {
@@ -666,7 +675,7 @@ impl ClevoLedApp {
     fn new(settings_path: PathBuf, settings: Settings) -> Self {
         let writer = LedWriter::new();
         if !writer.ready() {
-            eprintln!("Keyboard LED interface is not writable: {}", writer.proc_path().display());
+            eprintln!("Keyboard RGB interface is not writable: {}", writer.proc_path().display());
         }
         let settings_mtime = file_modified(&settings_path);
 

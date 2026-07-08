@@ -1,11 +1,11 @@
-# Clevo/Insyde 键盘灯 Linux 控制器
+# 蓝天控制中心 Linux 版
 
-这是一个给 Clevo/Insyde DCHU 方案笔记本使用的 Linux 键盘 RGB 控制器，提供图形界面、后台灯效服务、内核模块和安装包构建脚本。
+这是一个给蓝天/Clevo/Insyde DCHU 方案笔记本使用的 Linux 控制中心，提供图形界面、后台服务、键盘 RGB 控制、DCHU 诊断 CLI、风扇/性能模式实验入口、内核模块和安装包构建脚本。
 
 项目由两部分组成：
 
 - `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露 `/proc/clevo_kbd_led` 和 `/proc/clevo_dchu`
-- `src/`：Rust 程序，同一个二进制同时提供前台 GUI、后台灯效服务和 DCHU 测试 CLI
+- `src/`：Rust 程序，同一个二进制同时提供前台 GUI、后台服务和 DCHU 测试 CLI
 
 GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。后台服务通过固定 runtime 目录中的锁文件保持单例，多个 GUI 窗口共享同一个配置状态。
 
@@ -27,8 +27,8 @@ ACPI 路径：
 
 ```text
 app/
-  clevo-keyboard-led.desktop  桌面启动器
-  run-clevo-led-gui.sh        桌面启动器调用的脚本
+  clevo-control-center.desktop 桌面启动器
+  run-clevo-control-center.sh 桌面启动器调用的脚本
 module/
   clevo_kbd_led.c             内核模块源码
   Makefile                    内核模块构建入口
@@ -81,7 +81,7 @@ cargo build --release
 构建完成后的主程序：
 
 ```text
-target/release/clevo-keyboard-led
+target/release/clevo-control-center
 ```
 
 ## 打包和安装
@@ -95,40 +95,42 @@ scripts/package-tar.sh
 输出示例：
 
 ```text
-dist/clevo-keyboard-led-0.1.0-linux-x86_64.tar.gz
+dist/clevo-control-center-0.1.0-linux-x86_64.tar.gz
 ```
 
 安装通用包：
 
 ```bash
-tar -xf dist/clevo-keyboard-led-0.1.0-linux-x86_64.tar.gz -C /tmp
-/tmp/clevo-keyboard-led-0.1.0-linux-x86_64/install.sh
+tar -xf dist/clevo-control-center-0.1.0-linux-x86_64.tar.gz -C /tmp
+/tmp/clevo-control-center-0.1.0-linux-x86_64/install.sh
 ```
 
 默认安装到：
 
-- 程序目录：`~/.local/lib/clevo-keyboard-led`
-- 命令入口：`~/.local/bin/clevo-keyboard-led`
-- 桌面入口：`~/.local/share/applications/clevo-keyboard-led.desktop`
+- 程序目录：`~/.local/lib/clevo-control-center`
+- 命令入口：`~/.local/bin/clevo-control-center`
+- 兼容入口：`~/.local/bin/clevo-keyboard-led`
+- 桌面入口：`~/.local/share/applications/clevo-control-center.desktop`
 
 卸载通用包：
 
 ```bash
-/tmp/clevo-keyboard-led-0.1.0-linux-x86_64/install.sh uninstall
+/tmp/clevo-control-center-0.1.0-linux-x86_64/install.sh uninstall
 ```
 
 Debian/Ubuntu 包：
 
 ```bash
 scripts/package-deb.sh
-sudo apt install ./dist/clevo-keyboard-led_0.1.0_amd64.deb
+sudo apt install ./dist/clevo-control-center_0.1.0_amd64.deb
 ```
 
 `.deb` 会安装：
 
-- `/usr/bin/clevo-keyboard-led`
-- `/usr/lib/clevo-keyboard-led/`
-- `/usr/share/applications/clevo-keyboard-led.desktop`
+- `/usr/bin/clevo-control-center`
+- `/usr/bin/clevo-keyboard-led` 兼容入口
+- `/usr/lib/clevo-control-center/`
+- `/usr/share/applications/clevo-control-center.desktop`
 
 内核模块不能跨内核通用分发。安装脚本和 `.deb` 会携带模块源码，并在目标机器存在当前内核 headers 时尝试本机编译和加载模块。
 
@@ -166,25 +168,25 @@ echo 'f2 0000ff' | sudo tee /proc/clevo_kbd_led
 读取实时状态和风扇表：
 
 ```bash
-sudo target/release/clevo-keyboard-led dchu status
-sudo target/release/clevo-keyboard-led dchu fan-table
-sudo target/release/clevo-keyboard-led dchu caps
+sudo target/release/clevo-control-center dchu status
+sudo target/release/clevo-control-center dchu fan-table
+sudo target/release/clevo-control-center dchu caps
 ```
 
 原始读取：
 
 ```bash
-sudo target/release/clevo-keyboard-led dchu raw-get 0x0d
+sudo target/release/clevo-control-center dchu raw-get 0x0d
 ```
 
 实验写入需要显式确认参数：
 
 ```bash
-sudo target/release/clevo-keyboard-led dchu raw-set-dword 0x79 0x19000002 --i-understand
-sudo target/release/clevo-keyboard-led dchu kbd-brightness 0 --i-understand
-sudo target/release/clevo-keyboard-led dchu fan-curve-set '<30-or-32-hex-bytes>' --i-understand
-sudo target/release/clevo-keyboard-led dchu fan-mode auto --i-understand
-sudo target/release/clevo-keyboard-led dchu power-mode 2 --i-understand
+sudo target/release/clevo-control-center dchu raw-set-dword 0x79 0x19000002 --i-understand
+sudo target/release/clevo-control-center dchu kbd-brightness 0 --i-understand
+sudo target/release/clevo-control-center dchu fan-curve-set '<30-or-32-hex-bytes>' --i-understand
+sudo target/release/clevo-control-center dchu fan-mode auto --i-understand
+sudo target/release/clevo-control-center dchu power-mode 2 --i-understand
 ```
 
 `raw-set`、`raw-set-dword`、`kbd-brightness`、`fan-curve-set`、`fan-mode`、`power-mode` 会写 EC/固件状态，只用于测试确认过的命令。`fan-mode` 支持 `auto/max/silent/maxq/custom/turbo`，分别对应 DCHU fan mode `0/1/3/5/6/7`。
@@ -206,7 +208,7 @@ GUI 布局：
 
 自定义模式下开始按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`，设置窗口可选择 `f0-f6`。
 
-普通启动 GUI 时，程序会自动拉起后台服务。后台服务通过固定目录中的 `clevo-keyboard-led.lock` 和 `clevo-keyboard-led.pid` 保持单例，并持续读取 `settings.json` 执行动态灯效，因此关闭 GUI 后灯效仍会继续。
+普通启动 GUI 时，程序会自动拉起后台服务。后台服务通过固定目录中的 `clevo-control-center.lock` 和 `clevo-control-center.pid` 保持单例，并持续读取 `settings.json` 执行动态灯效，因此关闭 GUI 后灯效仍会继续。
 
 可以同时打开多个 GUI 窗口。每个窗口都会把操作写入同一个 `settings.json`，并自动读取其他窗口保存的设置变化。
 
@@ -226,24 +228,24 @@ scripts/stop-service.sh
 
 运行时文件使用固定 XDG 路径，不依赖启动时的工作目录：
 
-- 配置：`${XDG_CONFIG_HOME:-~/.config}/clevo-keyboard-led/settings.json`
-- pid/lock：`${XDG_RUNTIME_DIR:-/tmp/clevo-keyboard-led-$(id -u)}/clevo-keyboard-led/`
-- 日志：`${XDG_STATE_HOME:-~/.local/state}/clevo-keyboard-led/clevo-keyboard-led.service.log`
+- 配置：`${XDG_CONFIG_HOME:-~/.config}/clevo-control-center/settings.json`
+- pid/lock：`${XDG_RUNTIME_DIR:-/tmp/clevo-control-center-$(id -u)}/clevo-control-center/`
+- 日志：`${XDG_STATE_HOME:-~/.local/state}/clevo-control-center/clevo-control-center.service.log`
 
-首次启动时，如果固定配置目录还没有 `settings.json`，程序会尝试从当前目录的旧版 `settings.json` 复制一份过去。
+首次启动时，如果固定配置目录还没有 `settings.json`，程序会尝试从旧的 `~/.config/clevo-keyboard-led/settings.json` 或当前目录的旧版 `settings.json` 复制一份过去。
 
 ## 桌面启动器
 
 桌面文件：
 
 ```text
-app/clevo-keyboard-led.desktop
+app/clevo-control-center.desktop
 ```
 
 通用安装脚本和 `.deb` 会自动安装并刷新桌面入口。手动调试时也可以复制：
 
 ```bash
-cp app/clevo-keyboard-led.desktop ~/.local/share/applications/
+cp app/clevo-control-center.desktop ~/.local/share/applications/
 update-desktop-database ~/.local/share/applications 2>/dev/null || true
 ```
 

@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [[ -x target/release/clevo-control-center ]]; then
+    exec target/release/clevo-control-center --service
+fi
+
 if [[ -x target/release/clevo-keyboard-led ]]; then
     exec target/release/clevo-keyboard-led --service
 fi

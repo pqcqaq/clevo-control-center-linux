@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_ID="clevo-keyboard-led"
+APP_ID="clevo-control-center"
 MODULE_DIR="/usr/lib/$APP_ID/module"
 KERNEL_BUILD="/lib/modules/$(uname -r)/build"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
+    rm -f /usr/share/applications/clevo-keyboard-led.desktop
     update-desktop-database /usr/share/applications 2>/dev/null || true
 fi
 
@@ -18,7 +19,7 @@ if command -v make >/dev/null 2>&1 && [[ -d "$KERNEL_BUILD" ]]; then
         modprobe clevo_kbd_led || true
     fi
 else
-    echo "clevo-keyboard-led: kernel headers or make missing; module was not built automatically" >&2
+    echo "clevo-control-center: kernel headers or make missing; module was not built automatically" >&2
 fi
 
 exit 0

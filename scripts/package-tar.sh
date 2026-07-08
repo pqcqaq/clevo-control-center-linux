@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-APP_ID="clevo-keyboard-led"
+APP_ID="clevo-control-center"
 VERSION="$(grep -m1 '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"
 ARCH="$(uname -m)"
 STAGE="$ROOT_DIR/dist/$APP_ID-$VERSION-linux-$ARCH"

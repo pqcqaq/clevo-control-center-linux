@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Clevo Control Center
+Comment=Clevo/BlueSky control center for Linux
+Exec=clevo-control-center
+Icon=preferences-system
+Terminal=false
+Categories=Settings;HardwareSettings;

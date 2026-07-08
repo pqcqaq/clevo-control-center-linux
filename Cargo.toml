@@ -1,8 +1,8 @@
 [package]
-name = "clevo-keyboard-led"
+name = "clevo-control-center"
 version = "0.1.0"
 edition = "2021"
-description = "Clevo/Insyde keyboard RGB controller for Linux"
+description = "Clevo/BlueSky control center for Linux"
 license = "GPL-2.0"
 
 [dependencies]
