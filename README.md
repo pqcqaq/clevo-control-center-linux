@@ -1,6 +1,6 @@
 # Clevo/Insyde 键盘灯 Linux 控制器
 
-这是一个给 Clevo/Insyde DCHU 方案笔记本使用的 Linux 键盘 RGB 控制器。
+这是一个给 Clevo/Insyde DCHU 方案笔记本使用的 Linux 键盘 RGB 控制器，提供图形界面、后台灯效服务、内核模块和安装包构建脚本。
 
 项目由两部分组成：
 
@@ -9,9 +9,7 @@
 
 GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。
 
-## 已验证的硬件调用
-
-当前实现复刻 Windows `ColorfulLedKeyboardSet` 调用 `InsydeDCHU.dll` 的行为。
+## 硬件接口
 
 ACPI 路径：
 
@@ -21,7 +19,7 @@ ACPI 路径：
 - Function：`0x67`
 - Payload：`Package(Buffer(0x100) { G, R, B, zone, ... })`
 
-用户态 `/proc/clevo_kbd_led` 接口使用普通 `RRGGBB` 输入；内核模块内部会转换成固件需要的 `[G, R, B, zone]`。
+用户态通过 `/proc/clevo_kbd_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的 `[G, R, B, zone]` 数据。
 
 ## 目录结构
 
@@ -35,9 +33,14 @@ module/
 scripts/
   check-env.sh                环境和依赖检查
   build.sh                    构建内核模块和 Rust 程序
+  package-tar.sh              生成通用 Linux tar.gz 安装包
+  package-deb.sh              生成 Debian/Ubuntu deb 安装包
   run-gui.sh                  启动 GUI
   run-service.sh              手动启动后台服务
   stop-service.sh             停止后台服务
+packaging/
+  install.sh                  通用包安装脚本
+  deb/                        Debian 包控制文件和安装钩子
 src/
   main.rs                     GUI、配置读写、后台服务实现
 ```
