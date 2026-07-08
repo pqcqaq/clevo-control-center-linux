@@ -525,7 +525,26 @@ fn print_dchu_usage() {
     println!("  clevo-keyboard-led dchu raw-set-dword <function> <u32> --i-understand");
     println!("  clevo-keyboard-led dchu kbd-brightness <0..9> --i-understand");
     println!("  clevo-keyboard-led dchu fan-curve-set <30-or-32-hex-bytes> --i-understand");
+    println!("  clevo-keyboard-led dchu fan-mode <auto|max|silent|maxq|custom|turbo|0|1|3|5|6|7> --i-understand");
     println!("  clevo-keyboard-led dchu power-mode <0..3> --i-understand");
+}
+
+fn parse_fan_mode(value: &str) -> Result<u32, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "auto" => Ok(0),
+        "max" => Ok(1),
+        "silent" => Ok(3),
+        "maxq" => Ok(5),
+        "custom" => Ok(6),
+        "turbo" => Ok(7),
+        _ => {
+            let mode = parse_u32_arg(value)?;
+            match mode {
+                0 | 1 | 3 | 5 | 6 | 7 => Ok(mode),
+                _ => Err("fan mode must be one of auto/max/silent/maxq/custom/turbo or 0/1/3/5/6/7".to_owned()),
+            }
+        }
+    }
 }
 
 fn run_dchu_cli(args: &[String]) -> Result<(), String> {
@@ -595,6 +614,13 @@ fn run_dchu_cli(args: &[String]) -> Result<(), String> {
                 }
             }
             print_dchu_raw(dchu_query(0x0e, Some(&bytes))?);
+        }
+        "fan-mode" => {
+            require_danger_flag(args)?;
+            let mode = parse_fan_mode(args.get(1).ok_or("fan-mode requires <mode>")?)?;
+            let payload = (0x01_u32 << 24) | mode;
+            println!("writing SCMD 0x79 fan-mode payload 0x{payload:08x}");
+            print_dchu_raw(dchu_query(0x79, Some(&payload.to_le_bytes()))?);
         }
         "power-mode" => {
             require_danger_flag(args)?;
@@ -1609,6 +1635,18 @@ mod tests {
             Some(Rgb { r: 12, g: 34, b: 56 })
         );
         assert_eq!(parse_color_picker_output(""), None);
+    }
+
+    #[test]
+    fn parses_dchu_fan_modes() {
+        assert_eq!(parse_fan_mode("auto").unwrap(), 0);
+        assert_eq!(parse_fan_mode("max").unwrap(), 1);
+        assert_eq!(parse_fan_mode("silent").unwrap(), 3);
+        assert_eq!(parse_fan_mode("maxq").unwrap(), 5);
+        assert_eq!(parse_fan_mode("custom").unwrap(), 6);
+        assert_eq!(parse_fan_mode("turbo").unwrap(), 7);
+        assert_eq!(parse_fan_mode("0").unwrap(), 0);
+        assert!(parse_fan_mode("2").is_err());
     }
 
     #[test]

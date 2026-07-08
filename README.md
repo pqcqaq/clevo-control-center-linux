@@ -183,10 +183,11 @@ sudo target/release/clevo-keyboard-led dchu raw-get 0x0d
 sudo target/release/clevo-keyboard-led dchu raw-set-dword 0x79 0x19000002 --i-understand
 sudo target/release/clevo-keyboard-led dchu kbd-brightness 0 --i-understand
 sudo target/release/clevo-keyboard-led dchu fan-curve-set '<30-or-32-hex-bytes>' --i-understand
+sudo target/release/clevo-keyboard-led dchu fan-mode auto --i-understand
 sudo target/release/clevo-keyboard-led dchu power-mode 2 --i-understand
 ```
 
-`raw-set`、`raw-set-dword`、`kbd-brightness`、`fan-curve-set`、`power-mode` 会写 EC/固件状态，只用于测试确认过的命令。
+`raw-set`、`raw-set-dword`、`kbd-brightness`、`fan-curve-set`、`fan-mode`、`power-mode` 会写 EC/固件状态，只用于测试确认过的命令。`fan-mode` 支持 `auto/max/silent/maxq/custom/turbo`，分别对应 DCHU fan mode `0/1/3/5/6/7`。
 
 ## GUI 和后台服务
 
