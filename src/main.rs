@@ -7,8 +7,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use eframe::egui::{
     self, pos2, vec2, Align2, Area, Button, CentralPanel, Color32, ComboBox, Context,
-    FontData, FontDefinitions, FontFamily, FontId, Frame, Id, Order, RichText, Sense, Slider,
-    Stroke, Ui, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId,
+    FontData, FontDefinitions, FontFamily, FontId, Frame, Id, Order, RichText, ScrollArea, Sense,
+    Slider, Stroke, Ui, ViewportBuilder, ViewportCommand,
 };
 use serde::{Deserialize, Serialize};
 
@@ -122,6 +122,37 @@ impl Mode {
             Self::Chase,
             Self::Blink,
             Self::Breathing,
+        ]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ControlPage {
+    Overview,
+    Lighting,
+    Performance,
+    Diagnostics,
+    Settings,
+}
+
+impl ControlPage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "总览",
+            Self::Lighting => "灯光",
+            Self::Performance => "性能",
+            Self::Diagnostics => "诊断",
+            Self::Settings => "设置",
+        }
+    }
+
+    fn all() -> &'static [Self] {
+        &[
+            Self::Overview,
+            Self::Lighting,
+            Self::Performance,
+            Self::Diagnostics,
+            Self::Settings,
         ]
     }
 }
@@ -656,15 +687,17 @@ struct ClevoLedApp {
     writer: LedWriter,
     settings_path: PathBuf,
     settings_mtime: Option<SystemTime>,
+    active_page: ControlPage,
     mode: Mode,
     speed: u8,
     brightness: u8,
     running: bool,
     f0_color: Rgb,
     zones: Vec<ZoneId>,
-    settings_open: bool,
     menu_open: bool,
     last_error: Option<String>,
+    command_output: String,
+    command_status: Option<String>,
     window_pos: Option<[f32; 2]>,
     dirty_settings: bool,
     dirty_window_position: bool,
@@ -683,15 +716,17 @@ impl ClevoLedApp {
             writer,
             settings_path,
             settings_mtime,
+            active_page: ControlPage::Overview,
             mode: settings.mode,
             speed: settings.speed,
             brightness: settings.brightness,
             running: settings.running,
             f0_color: settings.f0_color,
             zones: settings.zones,
-            settings_open: false,
             menu_open: false,
             last_error: None,
+            command_output: String::new(),
+            command_status: None,
             window_pos: settings.window_pos,
             dirty_settings: false,
             dirty_window_position: false,
@@ -740,6 +775,55 @@ impl ClevoLedApp {
             self.last_error = Some(err.to_string());
             self.running = false;
             eprintln!("Failed to write selected color: {err}");
+        }
+    }
+
+    fn run_dchu_read(&mut self, command: &str) {
+        self.run_dchu_command(&["dchu", command], true);
+    }
+
+    fn run_dchu_write(&mut self, args: &[&str]) {
+        let mut command_args = vec!["dchu"];
+        command_args.extend_from_slice(args);
+        self.run_dchu_command(&command_args, true);
+    }
+
+    fn run_dchu_command(&mut self, args: &[&str], privileged: bool) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(err) => {
+                self.command_status = Some("无法定位程序".to_owned());
+                self.command_output = err.to_string();
+                return;
+            }
+        };
+
+        let output = if privileged {
+            let mut command = Command::new("pkexec");
+            command.arg(exe);
+            command.args(args);
+            command.output()
+        } else {
+            let mut command = Command::new(exe);
+            command.args(args);
+            command.output()
+        };
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                self.command_output = format!("{stdout}{stderr}");
+                self.command_status = Some(if output.status.success() {
+                    "命令执行完成".to_owned()
+                } else {
+                    format!("命令失败: {}", output.status)
+                });
+            }
+            Err(err) => {
+                self.command_status = Some("命令启动失败".to_owned());
+                self.command_output = err.to_string();
+            }
         }
     }
 
@@ -852,14 +936,12 @@ impl eframe::App for ClevoLedApp {
         self.update_window_position(ctx);
 
         CentralPanel::default()
-            .frame(Frame::none().fill(Color32::from_rgb(16, 18, 22)))
+            .frame(Frame::none().fill(Color32::from_rgb(13, 15, 19)))
             .show(ctx, |ui| {
                 custom_title_bar(ui, ctx, self);
-                ui.add_space(2.0);
-                main_controls(ui, self);
+                control_center(ui, self);
             });
 
-        settings_viewport(ctx, self);
         self.persist_settings_if_due(false);
     }
 
@@ -870,15 +952,15 @@ impl eframe::App for ClevoLedApp {
 
 fn custom_title_bar(ui: &mut Ui, ctx: &Context, app: &mut ClevoLedApp) {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 26.0), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 42.0), Sense::click_and_drag());
     if response.drag_started() {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
     }
 
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(16, 18, 22));
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(13, 15, 19));
 
-    let logo_rect = egui::Rect::from_min_size(pos2(rect.left() + 6.0, rect.top() + 3.0), vec2(24.0, 20.0));
+    let logo_rect = egui::Rect::from_min_size(pos2(rect.left() + 14.0, rect.top() + 8.0), vec2(28.0, 26.0));
     let logo_response = ui.interact(logo_rect, ui.id().with("logo"), Sense::click());
     let logo_fill = if logo_response.hovered() {
         Color32::from_rgb(54, 60, 70)
@@ -889,6 +971,13 @@ fn custom_title_bar(ui: &mut Ui, ctx: &Context, app: &mut ClevoLedApp) {
     painter.circle_filled(logo_rect.center() + vec2(-3.0, -2.5), 2.5, Color32::from_rgb(246, 92, 92));
     painter.circle_filled(logo_rect.center() + vec2(3.0, -2.5), 2.5, Color32::from_rgb(93, 204, 132));
     painter.circle_filled(logo_rect.center() + vec2(0.0, 3.0), 2.5, Color32::from_rgb(92, 151, 247));
+    painter.text(
+        pos2(rect.left() + 52.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Clevo Control Center",
+        FontId::proportional(15.0),
+        Color32::from_rgb(229, 233, 240),
+    );
     if logo_response.clicked() {
         app.menu_open = !app.menu_open;
     }
@@ -905,24 +994,24 @@ fn custom_title_bar(ui: &mut Ui, ctx: &Context, app: &mut ClevoLedApp) {
                     .inner_margin(egui::Margin::symmetric(6.0, 6.0))
                     .show(ui, |ui| {
                         if ui
-                            .add_sized(vec2(68.0, 24.0), Button::new(RichText::new("设置").size(13.0)))
+                            .add_sized(vec2(86.0, 26.0), Button::new(RichText::new("设置").size(13.0)))
                             .clicked()
                         {
                             app.menu_open = false;
-                            app.settings_open = true;
+                            app.active_page = ControlPage::Settings;
                         }
                     });
             });
     }
 
-    let close_rect = egui::Rect::from_min_size(pos2(rect.right() - 34.0, rect.top()), vec2(30.0, 26.0));
+    let close_rect = egui::Rect::from_min_size(pos2(rect.right() - 42.0, rect.top() + 5.0), vec2(34.0, 32.0));
     let close_response = ui.interact(close_rect, ui.id().with("close"), Sense::click());
     let close_fill = if close_response.hovered() {
         Color32::from_rgb(92, 36, 42)
     } else {
         Color32::from_rgb(31, 34, 40)
     };
-    painter.circle_filled(close_rect.center(), 10.0, close_fill);
+    painter.circle_filled(close_rect.center(), 12.0, close_fill);
     painter.text(
         close_rect.center(),
         Align2::CENTER_CENTER,
@@ -935,22 +1024,124 @@ fn custom_title_bar(ui: &mut Ui, ctx: &Context, app: &mut ClevoLedApp) {
     }
 }
 
-fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
-    let custom_mode = app.mode == Mode::Custom;
+fn control_center(ui: &mut Ui, app: &mut ClevoLedApp) {
+    ui.horizontal(|ui| {
+        sidebar(ui, app);
+        ui.add_space(12.0);
+        Frame::none()
+            .fill(Color32::from_rgb(18, 21, 26))
+            .rounding(10.0)
+            .inner_margin(egui::Margin::same(16.0))
+            .show(ui, |ui| {
+                ui.set_min_width(730.0);
+                ui.set_min_height(510.0);
+                match app.active_page {
+                    ControlPage::Overview => overview_page(ui, app),
+                    ControlPage::Lighting => lighting_page(ui, app),
+                    ControlPage::Performance => performance_page(ui, app),
+                    ControlPage::Diagnostics => diagnostics_page(ui, app),
+                    ControlPage::Settings => settings_page(ui, app),
+                }
+            });
+    });
+}
+
+fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp) {
     Frame::none()
-        .fill(Color32::from_rgb(21, 24, 29))
+        .fill(Color32::from_rgb(15, 17, 22))
+        .inner_margin(egui::Margin::symmetric(12.0, 14.0))
+        .show(ui, |ui| {
+            ui.set_width(170.0);
+            ui.add_space(4.0);
+            ui.label(RichText::new("蓝天控制中心").size(18.0).strong().color(Color32::from_rgb(238, 241, 246)));
+            ui.label(RichText::new("Linux Edition").size(12.0).color(Color32::from_rgb(126, 136, 150)));
+            ui.add_space(20.0);
+            for page in ControlPage::all() {
+                let selected = app.active_page == *page;
+                let fill = if selected { Color32::from_rgb(42, 74, 105) } else { Color32::from_rgb(22, 25, 31) };
+                let text = if selected { Color32::from_rgb(246, 249, 252) } else { Color32::from_rgb(176, 185, 198) };
+                if ui
+                    .add_sized(
+                        vec2(146.0, 34.0),
+                        Button::new(RichText::new(page.label()).size(14.0).color(text)).fill(fill),
+                    )
+                    .clicked()
+                {
+                    app.active_page = *page;
+                    app.menu_open = false;
+                }
+                ui.add_space(6.0);
+            }
+            ui.add_space(18.0);
+            status_pill(ui, if app.writer.ready() { "模块可写" } else { "模块不可写" }, app.writer.ready());
+            status_pill(ui, if active_service_pid().is_some() { "服务运行中" } else { "服务未运行" }, active_service_pid().is_some());
+        });
+}
+
+fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
+    ui.label(RichText::new(title).size(24.0).strong().color(Color32::from_rgb(238, 241, 246)));
+    ui.label(RichText::new(subtitle).size(13.0).color(Color32::from_rgb(146, 156, 170)));
+    ui.add_space(14.0);
+}
+
+fn status_pill(ui: &mut Ui, text: &str, ok: bool) {
+    let fill = if ok { Color32::from_rgb(23, 74, 52) } else { Color32::from_rgb(85, 55, 30) };
+    let color = if ok { Color32::from_rgb(136, 232, 174) } else { Color32::from_rgb(235, 188, 120) };
+    ui.add_sized(vec2(146.0, 26.0), Button::new(RichText::new(text).size(12.0).color(color)).fill(fill));
+}
+
+fn info_tile(ui: &mut Ui, title: &str, value: &str, accent: Color32) {
+    Frame::none()
+        .fill(Color32::from_rgb(23, 27, 34))
         .rounding(8.0)
         .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
-            ui.set_min_height(86.0);
-            ui.horizontal_centered(|ui| {
-                color_swatch(ui, app);
+            ui.set_min_size(vec2(156.0, 72.0));
+            ui.label(RichText::new(title).size(12.0).color(Color32::from_rgb(142, 153, 168)));
+            ui.add_space(8.0);
+            ui.label(RichText::new(value).size(20.0).strong().color(accent));
+        });
+}
 
-                ui.add_space(16.0);
+fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "总览", "键盘灯效、后台服务、DCHU 状态集中入口");
+    ui.horizontal(|ui| {
+        info_tile(ui, "灯效模式", app.mode.label(), Color32::from_rgb(129, 196, 255));
+        info_tile(ui, "灯效状态", if app.running { "运行" } else { "停止" }, Color32::from_rgb(151, 224, 169));
+        info_tile(ui, "亮度", &format!("{}%", app.brightness), Color32::from_rgb(255, 203, 126));
+        info_tile(ui, "分区", &format!("{} 个", app.selected_zones().len()), Color32::from_rgb(223, 166, 255));
+    });
+    ui.add_space(18.0);
+    ui.horizontal(|ui| {
+        if ui.add_sized(vec2(154.0, 38.0), Button::new("灯光控制")).clicked() {
+            app.active_page = ControlPage::Lighting;
+        }
+        if ui.add_sized(vec2(154.0, 38.0), Button::new("性能与风扇")).clicked() {
+            app.active_page = ControlPage::Performance;
+        }
+        if ui.add_sized(vec2(154.0, 38.0), Button::new("读取硬件状态")).clicked() {
+            app.run_dchu_read("status");
+            app.active_page = ControlPage::Diagnostics;
+        }
+    });
+    ui.add_space(18.0);
+    command_panel(ui, app);
+}
+
+fn lighting_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "灯光", "控制键盘 RGB 分区、动态模式、速度和亮度");
+    Frame::none()
+        .fill(Color32::from_rgb(23, 27, 34))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(16.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                color_swatch(ui, app);
+                ui.add_space(18.0);
                 ui.vertical(|ui| {
-                    ui.set_width(220.0);
+                    ui.set_width(330.0);
                     ComboBox::from_id_salt("mode")
-                        .width(220.0)
+                        .width(280.0)
                         .selected_text(app.mode.label())
                         .show_ui(ui, |ui| {
                             for mode in Mode::all() {
@@ -970,126 +1161,136 @@ fn main_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
                             }
                         });
 
+                    ui.add_space(12.0);
+                    lighting_slider(ui, "速度", &mut app.speed, app.mode != Mode::Custom);
                     ui.add_space(8.0);
-                    let speed_response = ui.horizontal(|ui| {
-                        ui.set_width(220.0);
-                        ui.label(RichText::new("速度").size(12.0));
-                        ui.add_enabled_ui(!custom_mode, |ui| {
-                            ui.add_sized(
-                                vec2(174.0, 18.0),
-                                Slider::new(&mut app.speed, 1..=100).show_value(false),
-                            )
-                        }).inner
-                    }).inner;
-                    if speed_response.changed() {
-                        app.mark_settings_dirty();
-                        app.persist_settings_if_due(true);
-                    }
-
-                    ui.add_space(6.0);
-                    let brightness_response = ui.horizontal(|ui| {
-                        ui.set_width(220.0);
-                        ui.label(RichText::new("亮度").size(12.0));
-                        ui.add_enabled_ui(!custom_mode, |ui| {
-                            ui.add_sized(
-                                vec2(174.0, 18.0),
-                                Slider::new(&mut app.brightness, 1..=100).show_value(false),
-                            )
-                        }).inner
-                    }).inner;
-                    if brightness_response.changed() {
+                    lighting_slider(ui, "亮度", &mut app.brightness, app.mode != Mode::Custom);
+                    if ui.ctx().input(|input| input.pointer.any_released()) {
                         app.mark_settings_dirty();
                         app.persist_settings_if_due(true);
                     }
                 });
-
-                ui.add_space(4.0);
-                let label = if app.running { "结束" } else { "开始" };
+                ui.add_space(18.0);
+                let label = if app.running { "停止灯效" } else { "启动灯效" };
                 if ui
-                    .add_enabled(!custom_mode, Button::new(RichText::new(label).size(16.0)).min_size(vec2(64.0, 42.0)))
+                    .add_enabled(app.mode != Mode::Custom, Button::new(RichText::new(label).size(15.0)).min_size(vec2(112.0, 42.0)))
                     .clicked()
                 {
                     app.toggle();
                 }
             });
         });
+    ui.add_space(14.0);
+    settings_page(ui, app);
 }
 
-fn settings_viewport(ctx: &Context, app: &mut ClevoLedApp) {
-    if !app.settings_open {
-        return;
+fn lighting_slider(ui: &mut Ui, label: &str, value: &mut u8, enabled: bool) {
+    ui.horizontal(|ui| {
+        ui.set_width(330.0);
+        ui.label(RichText::new(label).size(13.0).color(Color32::from_rgb(182, 190, 202)));
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.add_sized(vec2(250.0, 20.0), Slider::new(value, 1..=100).show_value(true));
+        });
+    });
+}
+
+fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "性能", "DCHU 电源档位和风扇策略");
+    ui.horizontal(|ui| {
+        control_group(ui, "电源模式", &[("安静", "0"), ("省电", "1"), ("性能", "2"), ("娱乐", "3")], |mode| {
+            app.run_dchu_write(&["power-mode", mode, "--i-understand"]);
+        });
+        ui.add_space(12.0);
+        control_group(ui, "风扇模式", &[("自动", "auto"), ("最大", "max"), ("静音", "silent"), ("MaxQ", "maxq"), ("Turbo", "turbo")], |mode| {
+            app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
+        });
+    });
+    ui.add_space(14.0);
+    if ui.add_sized(vec2(148.0, 34.0), Button::new("读取风扇表")).clicked() {
+        app.run_dchu_read("fan-table");
     }
+    ui.add_space(12.0);
+    command_panel(ui, app);
+}
 
-    let viewport_id = ViewportId::from_hash_of("settings");
-    let builder = ViewportBuilder::default()
-        .with_title("设置")
-        .with_inner_size([238.0, 172.0])
-        .with_min_inner_size([238.0, 172.0])
-        .with_max_inner_size([238.0, 172.0])
-        .with_resizable(false);
-
-    let mut close_requested = false;
-    let mut changed_zones = Vec::new();
-
-    ctx.show_viewport_immediate(viewport_id, builder, |ctx, class| {
-        if ctx.input(|input| input.viewport().close_requested()) {
-            close_requested = true;
-        }
-
-        CentralPanel::default()
-            .frame(Frame::none().fill(Color32::from_rgb(18, 20, 24)))
-            .show(ctx, |ui| {
-                let content = |ui: &mut Ui| {
-                    ui.add_space(10.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                        for zone in ALL_ZONES {
-                            let mut enabled = app.zones.contains(&zone);
-                            let is_last_enabled = enabled && app.zones.len() == 1;
-                            let response = ui
-                                .add_enabled_ui(!is_last_enabled, |ui| {
-                                    ui.add_sized(
-                                        vec2(50.0, 28.0),
-                                        egui::Checkbox::new(&mut enabled, zone.label()),
-                                    )
-                                })
-                                .inner;
-                            if response.changed() {
-                                changed_zones.push((zone, enabled));
-                            }
-                        }
-                    });
-                    ui.add_space(12.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add_sized(vec2(56.0, 26.0), Button::new("关闭")).clicked() {
-                            close_requested = true;
-                        }
-                    });
-                };
-
-                if class == ViewportClass::Embedded {
-                    egui::Window::new("设置")
-                        .collapsible(false)
-                        .resizable(false)
-                        .show(ctx, content);
-                } else {
-                    Frame::none()
-                        .inner_margin(egui::Margin::symmetric(14.0, 8.0))
-                        .show(ui, content);
+fn control_group<F: FnMut(&str)>(ui: &mut Ui, title: &str, items: &[(&str, &str)], mut action: F) {
+    Frame::none()
+        .fill(Color32::from_rgb(23, 27, 34))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(14.0))
+        .show(ui, |ui| {
+            ui.set_width(330.0);
+            ui.label(RichText::new(title).size(16.0).strong().color(Color32::from_rgb(232, 236, 242)));
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                for (label, value) in items {
+                    if ui.add_sized(vec2(86.0, 32.0), Button::new(*label)).clicked() {
+                        action(value);
+                    }
                 }
             });
-    });
-
-    for (zone, enabled) in changed_zones {
-        app.set_zone_enabled(zone, enabled);
-    }
-
-    if close_requested {
-        app.settings_open = false;
-        ctx.send_viewport_cmd_to(viewport_id, ViewportCommand::Close);
-    }
+        });
 }
 
+fn diagnostics_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "诊断", "读取 DCHU 状态、能力位和原始风扇数据");
+    ui.horizontal(|ui| {
+        if ui.add_sized(vec2(120.0, 34.0), Button::new("状态")).clicked() {
+            app.run_dchu_read("status");
+        }
+        if ui.add_sized(vec2(120.0, 34.0), Button::new("风扇表")).clicked() {
+            app.run_dchu_read("fan-table");
+        }
+        if ui.add_sized(vec2(120.0, 34.0), Button::new("能力位")).clicked() {
+            app.run_dchu_read("caps");
+        }
+    });
+    ui.add_space(12.0);
+    command_panel(ui, app);
+}
+
+fn settings_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "设置", "选择键盘生效分区");
+    Frame::none()
+        .fill(Color32::from_rgb(23, 27, 34))
+        .rounding(8.0)
+        .inner_margin(egui::Margin::same(14.0))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+                for zone in ALL_ZONES {
+                    let mut enabled = app.zones.contains(&zone);
+                    let is_last_enabled = enabled && app.zones.len() == 1;
+                    let response = ui
+                        .add_enabled_ui(!is_last_enabled, |ui| {
+                            ui.add_sized(vec2(72.0, 30.0), egui::Checkbox::new(&mut enabled, zone.label()))
+                        })
+                        .inner;
+                    if response.changed() {
+                        app.set_zone_enabled(zone, enabled);
+                    }
+                }
+            });
+        });
+}
+
+fn command_panel(ui: &mut Ui, app: &mut ClevoLedApp) {
+    if let Some(status) = &app.command_status {
+        ui.label(RichText::new(status).size(13.0).color(Color32::from_rgb(158, 205, 255)));
+    }
+    if !app.command_output.is_empty() {
+        Frame::none()
+            .fill(Color32::from_rgb(11, 13, 16))
+            .rounding(8.0)
+            .inner_margin(egui::Margin::same(12.0))
+            .show(ui, |ui| {
+                ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    ui.monospace(&app.command_output);
+                });
+            });
+    }
+}
 fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
     let size = vec2(62.0, 62.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -1507,11 +1708,10 @@ fn main() -> eframe::Result {
     let settings = load_settings(&settings_path);
     ensure_service_running();
     let mut viewport = ViewportBuilder::default()
-        .with_inner_size([432.0, 134.0])
-        .with_min_inner_size([432.0, 134.0])
-        .with_max_inner_size([432.0, 134.0])
+        .with_inner_size([960.0, 600.0])
+        .with_min_inner_size([860.0, 540.0])
         .with_decorations(false)
-        .with_resizable(false);
+        .with_resizable(true);
 
     if let Some([x, y]) = settings.window_pos {
         viewport = viewport.with_position(pos2(x, y));
