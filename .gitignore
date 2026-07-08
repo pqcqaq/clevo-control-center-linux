@@ -1,0 +1,31 @@
+# Rust build output
+/target/
+
+# Runtime state
+/settings.json
+/settings.json.tmp
+/clevo-keyboard-led.pid
+/clevo-keyboard-led.service.log
+/*.log
+
+# Kernel module build output
+/module/*.ko
+/module/*.o
+/module/*.mod
+/module/*.mod.c
+/module/*.symvers
+/module/Module.symvers
+/module/modules.order
+/module/.*.cmd
+/module/.tmp_versions/
+
+# Editor and OS noise
+/.idea/
+/.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Legacy Python prototype
+/app/clevo_keyboard_led_gui.py

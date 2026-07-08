@@ -1,0 +1,16 @@
+[package]
+name = "clevo-keyboard-led"
+version = "0.1.0"
+edition = "2021"
+description = "Clevo/Insyde keyboard RGB controller for Linux"
+license = "GPL-2.0"
+
+[dependencies]
+eframe = "0.29"
+egui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
