@@ -135,17 +135,15 @@ impl Drop for ServiceLock {
 }
 
 pub fn service_loop(settings_path: PathBuf) -> ! {
-    let lock = loop {
-        match ServiceLock::acquire() {
-            Ok(lock) => break lock,
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                eprintln!("Failed to acquire service lock: {err}");
-                thread::sleep(Duration::from_millis(750));
-            }
-            Err(err) => {
-                eprintln!("Failed to acquire service lock: {err}");
-                thread::sleep(Duration::from_secs(2));
-            }
+    let lock = match ServiceLock::acquire() {
+        Ok(lock) => lock,
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            eprintln!("Service is already running: {err}");
+            std::process::exit(0);
+        }
+        Err(err) => {
+            eprintln!("Failed to acquire service lock: {err}");
+            std::process::exit(1);
         }
     };
 

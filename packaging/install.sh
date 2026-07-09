@@ -53,10 +53,12 @@ install_module() {
 
     make -C "$LIB_DIR/module"
     if command -v pkexec >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        pkexec mkdir -p "/lib/modules/$(uname -r)/extra"
         pkexec install -m 0644 "$LIB_DIR/module/clevo_kbd_led.ko" "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
         pkexec depmod -a
         pkexec modprobe clevo_kbd_led
     elif [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        mkdir -p "/lib/modules/$(uname -r)/extra"
         install -m 0644 "$LIB_DIR/module/clevo_kbd_led.ko" "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
         depmod -a
         modprobe clevo_kbd_led
