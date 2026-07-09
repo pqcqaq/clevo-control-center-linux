@@ -8,7 +8,8 @@ use super::widgets::{
 use crate::dchu::{FanStatus, HardwareSnapshot};
 use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
-const GAUGE_GAP: f32 = 18.0;
+const GAUGE_GAP: f32 = 12.0;
+const GAUGE_EDGE_GUARD: f32 = 10.0;
 const MIN_GAUGE_WIDTH: f32 = 260.0;
 
 pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -55,9 +56,10 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 
 fn overview_gauge_columns(available_width: f32, fan_count: usize) -> usize {
     let max_columns = fan_count.clamp(1, 3);
+    let usable_width = (available_width - GAUGE_EDGE_GUARD).max(0.0);
     for columns in (1..=max_columns).rev() {
         let required_width = MIN_GAUGE_WIDTH * columns as f32 + GAUGE_GAP * (columns - 1) as f32;
-        if available_width >= required_width {
+        if usable_width >= required_width {
             return columns;
         }
     }
@@ -66,8 +68,11 @@ fn overview_gauge_columns(available_width: f32, fan_count: usize) -> usize {
 
 fn overview_gauge_width(available_width: f32, columns: usize) -> f32 {
     let columns = columns.max(1);
+    let usable_width = (available_width - GAUGE_EDGE_GUARD).max(MIN_GAUGE_WIDTH);
     let gap_width = GAUGE_GAP * (columns - 1) as f32;
-    ((available_width - gap_width) / columns as f32).max(MIN_GAUGE_WIDTH)
+    ((usable_width - gap_width) / columns as f32)
+        .floor()
+        .max(MIN_GAUGE_WIDTH)
 }
 
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -190,9 +195,9 @@ mod tests {
     #[test]
     fn overview_gauge_width_keeps_two_gauges_visible_when_space_allows() {
         assert_eq!(overview_gauge_columns(700.0, 2), 2);
-        assert_eq!(overview_gauge_width(700.0, 2), 341.0);
+        assert_eq!(overview_gauge_width(700.0, 2), 339.0);
         assert_eq!(overview_gauge_columns(520.0, 2), 1);
-        assert_eq!(overview_gauge_width(520.0, 1), 520.0);
+        assert_eq!(overview_gauge_width(520.0, 1), 510.0);
     }
 
     #[test]
@@ -200,6 +205,14 @@ mod tests {
         assert_eq!(overview_gauge_columns(900.0, 3), 3);
         assert_eq!(overview_gauge_columns(700.0, 3), 2);
         assert_eq!(overview_gauge_columns(520.0, 3), 1);
+    }
+
+    #[test]
+    fn overview_gauge_row_leaves_right_edge_guard() {
+        let columns = overview_gauge_columns(700.0, 2);
+        let width = overview_gauge_width(700.0, columns);
+        let occupied = width * columns as f32 + GAUGE_GAP * (columns - 1) as f32;
+        assert!(occupied <= 700.0 - GAUGE_EDGE_GUARD);
     }
 }
 
