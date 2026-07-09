@@ -18,6 +18,7 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         ControlPage::Performance => performance_page(ui, app),
         ControlPage::Diagnostics => diagnostics_page(ui, app),
         ControlPage::Settings => settings_page(ui, app),
+        ControlPage::Advanced => advanced_page(ui, app),
     }
 }
 
@@ -50,8 +51,6 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 
     ui.add_space(26.0);
     overview_controls(ui, app);
-    ui.add_space(18.0);
-    overview_advanced(ui, app);
 }
 
 fn overview_gauge_columns(available_width: f32, fan_count: usize) -> usize {
@@ -151,29 +150,8 @@ fn overview_row_label(ui: &mut Ui, label: &str) {
     );
 }
 
-fn overview_advanced(ui: &mut Ui, app: &mut ClevoLedApp) {
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new("高级")
-                .size(15.0)
-                .strong()
-                .color(Color32::from_rgb(236, 230, 218)),
-        );
-        let label = if app.overview_advanced_open {
-            "收起"
-        } else {
-            "展开"
-        };
-        if ui.add_sized(vec2(74.0, 30.0), Button::new(label)).clicked() {
-            app.overview_advanced_open = !app.overview_advanced_open;
-        }
-    });
-
-    if !app.overview_advanced_open {
-        return;
-    }
-
-    ui.add_space(8.0);
+fn advanced_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "高级", "DCHU 0x0C 只读硬件状态");
     Frame::none()
         .fill(Color32::from_rgb(35, 34, 30))
         .rounding(10.0)
@@ -182,7 +160,7 @@ fn overview_advanced(ui: &mut Ui, app: &mut ClevoLedApp) {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                 for tab in AdvancedTab::all() {
-                    let selected = app.overview_advanced_tab == *tab;
+                    let selected = app.advanced_tab == *tab;
                     let fill = if selected {
                         Color32::from_rgb(69, 51, 28)
                     } else {
@@ -192,12 +170,12 @@ fn overview_advanced(ui: &mut Ui, app: &mut ClevoLedApp) {
                         .add_sized(vec2(104.0, 30.0), Button::new(tab.label()).fill(fill))
                         .clicked()
                     {
-                        app.overview_advanced_tab = *tab;
+                        app.advanced_tab = *tab;
                     }
                 }
             });
             ui.add_space(12.0);
-            match app.overview_advanced_tab {
+            match app.advanced_tab {
                 AdvancedTab::Fans => advanced::fan_info(ui, app.hardware.as_ref()),
                 AdvancedTab::Temperatures => advanced::temperature_info(ui, app.hardware.as_ref()),
                 AdvancedTab::Other => advanced::other_info(ui, app.hardware.as_ref()),

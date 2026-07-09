@@ -20,7 +20,7 @@ ACPI 路径：
 
 用户态通过 `/proc/clevo_control_center_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的数据。
 
-`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。总览的高级区域会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
+`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。左侧“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
 
 `/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它不接受任意 DCHU function 或裸数据。
 
@@ -201,11 +201,12 @@ scripts/run-gui.sh
 
 GUI 页面：
 
-- 总览：灯效摘要、CPU/GPU 风扇转速和温度；第三路风扇 tach 有数据时额外显示 PCH 风扇；高级区域提供风扇信息、温度信息和其他 raw 状态
+- 总览：灯效摘要、CPU/GPU 风扇转速和温度；第三路风扇 tach 有数据时额外显示 PCH 风扇
 - 灯光：键盘 RGB 色块、灯效模式、速度和亮度
 - 性能：DCHU 电源模式和风扇模式按钮
 - 诊断：读取 DCHU 只读状态
 - 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
+- 高级：风扇 raw/解析值、温度块和其他 DCHU 0x0C raw 状态
 
 自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
 

@@ -18,7 +18,7 @@
 - `power-mode 0..3` 参考 opencontrol，对应 `Quiet/Powersaving/Performance/Entertainment`。
 - `fan-mode` 参考 opencontrol/opendchu，常见映射为 `0=auto`、`1=max`、`3=silent`、`5=maxq`、`6=custom`、`7=turbo`。
 - `status` 读取固件状态后解析当前 GUI 需要展示的 CPU/GPU 风扇转速和温度；风扇 raw tach 使用 `2156220 / raw_tach` 换算为 RPM，第三路 tach 非 0 时按 PCH 风扇显示；温度块按 `0x10..0x15` 展示，已确认的 CPU/GPU 字段直接显示为单字节摄氏度值，未知字段按 offset 展示。
-- 总览高级区域只读展示三类数据：风扇 raw/解析值、温度块、其他非零字段和完整 DCHU 0x0C raw buffer；不增加新的写入入口。
+- 左侧“高级”页面只读展示三类数据：风扇 raw/解析值、温度块、其他非零字段和完整 DCHU 0x0C raw buffer；不增加新的写入入口。
 
 ## 建议测试顺序
 

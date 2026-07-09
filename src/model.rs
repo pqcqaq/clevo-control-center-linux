@@ -109,6 +109,7 @@ pub enum ControlPage {
     Performance,
     Diagnostics,
     Settings,
+    Advanced,
 }
 
 impl ControlPage {
@@ -119,6 +120,7 @@ impl ControlPage {
             Self::Performance => "性能",
             Self::Diagnostics => "诊断",
             Self::Settings => "设置",
+            Self::Advanced => "高级",
         }
     }
 
@@ -129,6 +131,7 @@ impl ControlPage {
             Self::Performance,
             Self::Diagnostics,
             Self::Settings,
+            Self::Advanced,
         ]
     }
 }
@@ -174,5 +177,20 @@ pub fn normalize_zones(zones: &[ZoneId]) -> Vec<ZoneId> {
         default_zones()
     } else {
         normalized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn advanced_page_is_after_settings() {
+        let pages = ControlPage::all();
+        let settings_index = pages
+            .iter()
+            .position(|page| *page == ControlPage::Settings)
+            .unwrap();
+        assert_eq!(pages.get(settings_index + 1), Some(&ControlPage::Advanced));
     }
 }
