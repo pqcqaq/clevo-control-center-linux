@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::model::{ZoneColor, BASE_ZONES};
 
-const DEFAULT_PROC_PATH: &str = "/proc/clevo_kbd_led";
+const DEFAULT_PROC_PATH: &str = "/proc/clevo_control_center_led";
 
 pub struct LedWriter {
     proc_path: PathBuf,

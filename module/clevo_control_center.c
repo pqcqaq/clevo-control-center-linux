@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Minimal test driver for Clevo/Insyde DCHU keyboard RGB control.
+ * Clevo/BlueSky Control Center ACPI bridge.
  *
  * This mirrors the Windows InsydeDCHU.dll call:
  *   \_SB.DCHU._DSM(UUID=93f224e4-fbdc-4bbf-add6-db71bdc0afad,
@@ -9,14 +9,15 @@
  */
 
 #include <linux/acpi.h>
+#include <linux/ctype.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
 
-#define LED_PROC_NAME "clevo_kbd_led"
-#define DCHU_PROC_NAME "clevo_dchu"
+#define LED_PROC_NAME "clevo_control_center_led"
+#define DCHU_CONTROL_PROC_NAME "clevo_dchu_control"
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
@@ -28,7 +29,7 @@ static const guid_t dchu_guid =
 		  0xad, 0xd6, 0xdb, 0x71, 0xbd, 0xc0, 0xaf, 0xad);
 
 static struct proc_dir_entry *led_proc_entry;
-static struct proc_dir_entry *dchu_proc_entry;
+static struct proc_dir_entry *dchu_control_proc_entry;
 static struct proc_dir_entry *dchu_status_proc_entry;
 static acpi_handle dchu_handle;
 static bool verbose;
@@ -37,8 +38,6 @@ struct dchu_result {
 	char text[DCHU_MAX_OUTPUT];
 	size_t len;
 };
-
-static struct dchu_result last_dchu_result;
 
 module_param(verbose, bool, 0644);
 MODULE_PARM_DESC(verbose, "Log every keyboard RGB update");
@@ -86,7 +85,7 @@ static int clevo_dchu_eval(u32 function, const u8 *payload, size_t payload_len,
 
 	status = acpi_evaluate_object(dchu_handle, "_DSM", &input, &output);
 	if (ACPI_FAILURE(status)) {
-		pr_err("clevo_kbd_led: _DSM function=0x%02x failed: %s\n",
+		pr_err("clevo_control_center: _DSM function=0x%02x failed: %s\n",
 		       function, acpi_format_exception(status));
 		return -EIO;
 	}
@@ -120,7 +119,7 @@ static int clevo_dchu_eval(u32 function, const u8 *payload, size_t payload_len,
 							"type %u\n", obj->type);
 			}
 		} else if (obj->type == ACPI_TYPE_INTEGER && obj->integer.value != function) {
-			pr_warn("clevo_kbd_led: unexpected _DSM function=0x%02x return 0x%llx\n",
+			pr_warn("clevo_control_center: unexpected _DSM function=0x%02x return 0x%llx\n",
 				function, obj->integer.value);
 			ret = -EIO;
 		}
@@ -138,15 +137,22 @@ static int clevo_dchu_set_zone_rgb(u8 zone, u8 r, u8 g, u8 b)
 	int ret = clevo_dchu_eval(DCHU_FUNCTION, payload, sizeof(payload), NULL);
 
 	if (!ret && verbose)
-		pr_info("clevo_kbd_led: set zone=0x%02x rgb=%02x%02x%02x\n",
+		pr_info("clevo_control_center: set zone=0x%02x rgb=%02x%02x%02x\n",
 			zone, r, g, b);
 	return ret;
+}
+
+static bool clevo_led_zone_allowed(unsigned int zone)
+{
+	return zone >= 0xf0 && zone <= 0xf6;
 }
 
 static int parse_hex_byte(const char *s, u8 *out)
 {
 	unsigned int value;
 
+	if (!isxdigit(s[0]) || !isxdigit(s[1]))
+		return -EINVAL;
 	if (sscanf(s, "%2x", &value) != 1 || value > 0xff)
 		return -EINVAL;
 
@@ -154,10 +160,26 @@ static int parse_hex_byte(const char *s, u8 *out)
 	return 0;
 }
 
-static ssize_t clevo_kbd_led_write(struct file *file, const char __user *ubuf,
-				   size_t count, loff_t *ppos)
+static int parse_rgb_hex(const char *s, u8 *r, u8 *g, u8 *b)
+{
+	if (strlen(s) != 6)
+		return -EINVAL;
+
+	if (parse_hex_byte(s, r) ||
+	    parse_hex_byte(s + 2, g) ||
+	    parse_hex_byte(s + 4, b))
+		return -EINVAL;
+
+	return 0;
+}
+
+static ssize_t clevo_led_write(struct file *file, const char __user *ubuf,
+			       size_t count, loff_t *ppos)
 {
 	char buf[64];
+	char first[16] = { 0 };
+	char second[16] = { 0 };
+	char extra[2] = { 0 };
 	char *p;
 	unsigned int zone_int = 0xff;
 	u8 r, g, b, zone;
@@ -175,14 +197,17 @@ static ssize_t clevo_kbd_led_write(struct file *file, const char __user *ubuf,
 
 	p = strim(buf);
 
-	matched = sscanf(p, "%x %2hhx%2hhx%2hhx", &zone_int, &r, &g, &b);
-	if (matched != 4) {
-		zone_int = 0xff;
-		if (strlen(p) < 6 ||
-		    parse_hex_byte(p, &r) ||
-		    parse_hex_byte(p + 2, &g) ||
-		    parse_hex_byte(p + 4, &b))
+	matched = sscanf(p, "%15s %15s %1s", first, second, extra);
+	if (matched == 1) {
+		if (parse_rgb_hex(first, &r, &g, &b))
 			return -EINVAL;
+	} else if (matched == 2) {
+		if (kstrtouint(first, 16, &zone_int))
+			return -EINVAL;
+		if (parse_rgb_hex(second, &r, &g, &b))
+			return -EINVAL;
+	} else {
+		return -EINVAL;
 	}
 
 	if (zone_int == 0xff) {
@@ -194,6 +219,8 @@ static ssize_t clevo_kbd_led_write(struct file *file, const char __user *ubuf,
 	} else {
 		if (zone_int > 0xff)
 			return -EINVAL;
+		if (!clevo_led_zone_allowed(zone_int))
+			return -EINVAL;
 		zone = (u8)zone_int;
 		ret = clevo_dchu_set_zone_rgb(zone, r, g, b);
 	}
@@ -201,52 +228,94 @@ static ssize_t clevo_kbd_led_write(struct file *file, const char __user *ubuf,
 	return ret ? ret : count;
 }
 
-static ssize_t clevo_kbd_led_read(struct file *file, char __user *ubuf,
-				  size_t count, loff_t *ppos)
+static ssize_t clevo_led_read(struct file *file, char __user *ubuf,
+			      size_t count, loff_t *ppos)
 {
 	const char *help =
 		"Usage:\n"
-		"  echo ff0000 | sudo tee /proc/clevo_kbd_led       # all 3 zones red\n"
-		"  echo 'f0 00ff00' | sudo tee /proc/clevo_kbd_led  # zone 0xf0 green\n"
-		"Zones: f0, f1, f2 are the three Windows app zones.\n";
+		"  echo ff0000 > /proc/clevo_control_center_led       # all 3 zones red\n"
+		"  echo 'f0 00ff00' > /proc/clevo_control_center_led  # zone 0xf0 green\n"
+		"Zones: explicit zone writes are limited to f0..f6.\n";
 
 	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
 }
 
-static const struct proc_ops clevo_kbd_led_proc_ops = {
-	.proc_read = clevo_kbd_led_read,
-	.proc_write = clevo_kbd_led_write,
+static const struct proc_ops clevo_led_proc_ops = {
+	.proc_read = clevo_led_read,
+	.proc_write = clevo_led_write,
 };
 
-static int parse_hex_payload(char *text, u8 *payload, size_t *payload_len)
+static int parse_fan_mode_name(const char *value, u32 *mode)
 {
-	char *token;
-	size_t len = 0;
-	unsigned int value;
-
-	while ((token = strsep(&text, " \t\r\n")) != NULL) {
-		if (!*token)
-			continue;
-		if (len >= DCHU_BUFFER_SIZE)
-			return -EINVAL;
-		if (strlen(token) > 2 || sscanf(token, "%2x", &value) != 1 || value > 0xff)
-			return -EINVAL;
-		payload[len++] = value;
+	if (!strcmp(value, "auto")) {
+		*mode = 0;
+	} else if (!strcmp(value, "max")) {
+		*mode = 1;
+	} else if (!strcmp(value, "silent")) {
+		*mode = 3;
+	} else if (!strcmp(value, "maxq")) {
+		*mode = 5;
+	} else if (!strcmp(value, "custom")) {
+		*mode = 6;
+	} else if (!strcmp(value, "turbo")) {
+		*mode = 7;
+	} else {
+		return kstrtou32(value, 10, mode);
 	}
 
-	*payload_len = len;
 	return 0;
 }
 
-static ssize_t clevo_dchu_write(struct file *file, const char __user *ubuf,
-				size_t count, loff_t *ppos)
+static int clevo_dchu_set_fan_mode(const char *value)
 {
-	char buf[768];
+	u32 mode;
+	u32 payload;
+	int ret;
+
+	ret = parse_fan_mode_name(value, &mode);
+	if (ret)
+		return ret;
+
+	switch (mode) {
+	case 0:
+	case 1:
+	case 3:
+	case 5:
+	case 6:
+	case 7:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	payload = (0x01u << 24) | mode;
+	return clevo_dchu_eval(0x79, (u8 *)&payload, sizeof(payload), NULL);
+}
+
+static int clevo_dchu_set_power_mode(const char *value)
+{
+	u32 mode;
+	u32 payload;
+	int ret;
+
+	ret = kstrtou32(value, 10, &mode);
+	if (ret)
+		return ret;
+	if (mode > 3)
+		return -EINVAL;
+
+	payload = (0x19u << 24) | mode;
+	return clevo_dchu_eval(0x79, (u8 *)&payload, sizeof(payload), NULL);
+}
+
+static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ubuf,
+					size_t count, loff_t *ppos)
+{
+	char buf[96];
+	char command[24] = { 0 };
+	char value[24] = { 0 };
+	char extra[2] = { 0 };
 	char *p;
-	char op[16] = { 0 };
-	unsigned int function;
-	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
-	size_t payload_len = 0;
 	int ret;
 
 	if (count == 0)
@@ -258,54 +327,34 @@ static ssize_t clevo_dchu_write(struct file *file, const char __user *ubuf,
 	buf[count] = '\0';
 	p = strim(buf);
 
-	if (sscanf(p, "%15s %x", op, &function) < 2)
-		return -EINVAL;
-	if (function > 0xff)
+	if (sscanf(p, "%23s %23s %1s", command, value, extra) != 2)
 		return -EINVAL;
 
-	p = strchr(p, ' ');
-	if (!p)
+	if (!strcmp(command, "fan-mode"))
+		ret = clevo_dchu_set_fan_mode(value);
+	else if (!strcmp(command, "power-mode"))
+		ret = clevo_dchu_set_power_mode(value);
+	else
 		return -EINVAL;
-	p = skip_spaces(p);
-	p = strchr(p, ' ');
-	if (p) {
-		p = skip_spaces(p);
-		ret = parse_hex_payload(p, payload, &payload_len);
-		if (ret)
-			return ret;
-	}
-
-	if (!strcmp(op, "read")) {
-		ret = clevo_dchu_eval(function, NULL, 0, &last_dchu_result);
-	} else if (!strcmp(op, "write")) {
-		ret = clevo_dchu_eval(function, payload, payload_len, &last_dchu_result);
-	} else {
-		return -EINVAL;
-	}
 
 	return ret ? ret : count;
 }
 
-static ssize_t clevo_dchu_read(struct file *file, char __user *ubuf,
-			       size_t count, loff_t *ppos)
+static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
+				       size_t count, loff_t *ppos)
 {
 	const char *help =
 		"Usage:\n"
-		"  echo 'read 0c' > /proc/clevo_dchu\n"
-		"  echo 'read 0d' > /proc/clevo_dchu\n"
-		"  echo 'write 0e <payload bytes>' > /proc/clevo_dchu\n"
-		"  cat /proc/clevo_dchu\n";
+		"  echo 'fan-mode auto' > /proc/clevo_dchu_control\n"
+		"  echo 'fan-mode turbo' > /proc/clevo_dchu_control\n"
+		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n";
 
-	if (last_dchu_result.len == 0)
-		return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
-
-	return simple_read_from_buffer(ubuf, count, ppos,
-				       last_dchu_result.text, last_dchu_result.len);
+	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
 }
 
-static const struct proc_ops clevo_dchu_proc_ops = {
-	.proc_read = clevo_dchu_read,
-	.proc_write = clevo_dchu_write,
+static const struct proc_ops clevo_dchu_control_proc_ops = {
+	.proc_read = clevo_dchu_control_read,
+	.proc_write = clevo_dchu_control_write,
 };
 
 static ssize_t clevo_dchu_status_read(struct file *file, char __user *ubuf,
@@ -325,23 +374,24 @@ static const struct proc_ops clevo_dchu_status_proc_ops = {
 	.proc_read = clevo_dchu_status_read,
 };
 
-static int __init clevo_kbd_led_init(void)
+static int __init clevo_control_center_init(void)
 {
 	acpi_status status;
 
 	status = acpi_get_handle(NULL, DCHU_PATH, &dchu_handle);
 	if (ACPI_FAILURE(status)) {
-		pr_err("clevo_kbd_led: cannot get ACPI handle %s: %s\n",
+		pr_err("clevo_control_center: cannot get ACPI handle %s: %s\n",
 		       DCHU_PATH, acpi_format_exception(status));
 		return -ENODEV;
 	}
 
-	led_proc_entry = proc_create(LED_PROC_NAME, 0666, NULL, &clevo_kbd_led_proc_ops);
+	led_proc_entry = proc_create(LED_PROC_NAME, 0666, NULL, &clevo_led_proc_ops);
 	if (!led_proc_entry)
 		return -ENOMEM;
 
-	dchu_proc_entry = proc_create(DCHU_PROC_NAME, 0600, NULL, &clevo_dchu_proc_ops);
-	if (!dchu_proc_entry) {
+	dchu_control_proc_entry = proc_create(DCHU_CONTROL_PROC_NAME, 0666, NULL,
+					      &clevo_dchu_control_proc_ops);
+	if (!dchu_control_proc_entry) {
 		proc_remove(led_proc_entry);
 		return -ENOMEM;
 	}
@@ -349,27 +399,27 @@ static int __init clevo_kbd_led_init(void)
 	dchu_status_proc_entry = proc_create(DCHU_STATUS_PROC_NAME, 0444, NULL,
 					     &clevo_dchu_status_proc_ops);
 	if (!dchu_status_proc_entry) {
-		proc_remove(dchu_proc_entry);
+		proc_remove(dchu_control_proc_entry);
 		proc_remove(led_proc_entry);
 		return -ENOMEM;
 	}
 
-	pr_info("clevo_kbd_led: loaded, write RGB hex to /proc/%s; DCHU status at /proc/%s; DCHU debug at /proc/%s\n",
-		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_PROC_NAME);
+	pr_info("clevo_control_center: loaded, LED at /proc/%s; DCHU status at /proc/%s; DCHU control at /proc/%s\n",
+		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_CONTROL_PROC_NAME);
 	return 0;
 }
 
-static void __exit clevo_kbd_led_exit(void)
+static void __exit clevo_control_center_exit(void)
 {
 	proc_remove(dchu_status_proc_entry);
-	proc_remove(dchu_proc_entry);
+	proc_remove(dchu_control_proc_entry);
 	proc_remove(led_proc_entry);
-	pr_info("clevo_kbd_led: unloaded\n");
+	pr_info("clevo_control_center: unloaded\n");
 }
 
-module_init(clevo_kbd_led_init);
-module_exit(clevo_kbd_led_exit);
+module_init(clevo_control_center_init);
+module_exit(clevo_control_center_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Codex");
-MODULE_DESCRIPTION("Minimal Clevo/Insyde DCHU keyboard RGB ACPI test driver");
+MODULE_DESCRIPTION("Clevo/BlueSky control center ACPI bridge");

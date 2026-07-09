@@ -1,10 +1,10 @@
 # 蓝天控制中心 Linux 版
 
-这是一个给蓝天/Clevo/Insyde DCHU 方案笔记本使用的 Linux 控制中心，提供图形界面、后台服务、键盘 RGB 控制、DCHU 诊断 CLI、风扇/性能模式实验入口、内核模块和安装包构建脚本。
+这是一个给蓝天/Clevo/Insyde DCHU 方案笔记本使用的 Linux 控制中心，提供图形界面、后台服务、键盘 RGB 控制、受限 DCHU 控制入口、内核模块和安装包构建脚本。
 
 项目由两部分组成：
 
-- `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露键盘灯、只读硬件状态和 DCHU 调试 proc 节点
+- `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露键盘灯、只读硬件状态和白名单 DCHU 控制 proc 节点
 - `src/`：Rust 程序，同一个二进制同时提供前台 GUI、后台服务和 DCHU 测试 CLI
 
 GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。后台服务通过固定 runtime 目录中的锁文件保持单例，多个 GUI 窗口共享同一个配置状态。
@@ -16,14 +16,13 @@ ACPI 路径：
 - 设备：`\_SB.DCHU`
 - 方法：`_DSM`
 - UUID：`93f224e4-fbdc-4bbf-add6-db71bdc0afad`
-- Function：`0x67`
-- Payload：`Package(Buffer(0x100) { G, R, B, zone, ... })`
+- 键盘灯 Function：`0x67`
 
-用户态通过 `/proc/clevo_kbd_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的 `[G, R, B, zone]` 数据。
+用户态通过 `/proc/clevo_control_center_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的数据。
 
 `/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇转速等硬件状态。
 
-`/proc/clevo_dchu` 是调试接口，用于 CLI 读取 DCHU 原始数据或显式发送实验写命令。默认权限为 `0600`，需要 root。
+`/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它不接受任意 DCHU function 或裸数据。
 
 ## 目录结构
 
@@ -32,7 +31,7 @@ app/
   clevo-control-center.desktop 桌面启动器
   run-clevo-control-center.sh 桌面启动器调用的脚本
 module/
-  clevo_kbd_led.c             内核模块源码
+  clevo_control_center.c      内核模块源码
   Makefile                    内核模块构建入口
 scripts/
   check-env.sh                环境和依赖检查
@@ -144,14 +143,16 @@ sudo apt install ./dist/clevo-control-center_0.1.0_amd64.deb
 ## 加载内核模块
 
 ```bash
-sudo insmod module/clevo_kbd_led.ko
-cat /proc/clevo_kbd_led
+sudo insmod module/clevo_control_center.ko
+cat /proc/clevo_control_center_led
+cat /proc/clevo_dchu_status
+cat /proc/clevo_dchu_control
 ```
 
 卸载：
 
 ```bash
-sudo rmmod clevo_kbd_led
+sudo rmmod clevo_control_center
 ```
 
 ## /proc 控制接口
@@ -159,46 +160,36 @@ sudo rmmod clevo_kbd_led
 设置三个基础分区为同色：
 
 ```bash
-echo ff0000 | sudo tee /proc/clevo_kbd_led
+echo ff0000 > /proc/clevo_control_center_led
 ```
 
 设置单个分区：
 
 ```bash
-echo 'f0 ff0000' | sudo tee /proc/clevo_kbd_led
-echo 'f1 00ff00' | sudo tee /proc/clevo_kbd_led
-echo 'f2 0000ff' | sudo tee /proc/clevo_kbd_led
+echo 'f0 ff0000' > /proc/clevo_control_center_led
+echo 'f1 00ff00' > /proc/clevo_control_center_led
+echo 'f2 0000ff' > /proc/clevo_control_center_led
 ```
 
-## DCHU 测试 CLI
+切换受限风扇和电源模式：
 
-读取实时状态和风扇表：
+```bash
+echo 'fan-mode auto' > /proc/clevo_dchu_control
+echo 'fan-mode turbo' > /proc/clevo_dchu_control
+echo 'power-mode 2' > /proc/clevo_dchu_control
+```
+
+`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|turbo|0|1|3|5|6|7>` 和 `power-mode <0..3>`。其他命令、额外参数和越界值会被内核模块拒绝。
+
+## DCHU CLI
 
 ```bash
 target/release/clevo-control-center dchu status
-sudo target/release/clevo-control-center dchu fan-table
-sudo target/release/clevo-control-center dchu caps
+target/release/clevo-control-center dchu fan-mode auto --i-understand
+target/release/clevo-control-center dchu power-mode 2 --i-understand
 ```
 
-`dchu status` 优先读取 `/proc/clevo_dchu_status`，通常不需要 root。风扇表、能力位和原始读写仍使用 `/proc/clevo_dchu`，需要 root 权限。
-
-原始读取：
-
-```bash
-sudo target/release/clevo-control-center dchu raw-get 0x0d
-```
-
-实验写入需要显式确认参数：
-
-```bash
-sudo target/release/clevo-control-center dchu raw-set-dword 0x79 0x19000002 --i-understand
-sudo target/release/clevo-control-center dchu kbd-brightness 0 --i-understand
-sudo target/release/clevo-control-center dchu fan-curve-set '<30-or-32-hex-bytes>' --i-understand
-sudo target/release/clevo-control-center dchu fan-mode auto --i-understand
-sudo target/release/clevo-control-center dchu power-mode 2 --i-understand
-```
-
-`raw-set`、`raw-set-dword`、`kbd-brightness`、`fan-curve-set`、`fan-mode`、`power-mode` 会写 EC/固件状态，只用于测试确认过的命令。`fan-mode` 支持 `auto/max/silent/maxq/custom/turbo`，分别对应 DCHU fan mode `0/1/3/5/6/7`。
+`dchu status` 读取 `/proc/clevo_dchu_status`，通常不需要 root。`fan-mode` 和 `power-mode` 写入 `/proc/clevo_dchu_control`，普通用户可用。CLI 不再提供裸 DCHU 调试入口。
 
 ## GUI 和后台服务
 
@@ -213,7 +204,7 @@ GUI 页面：
 - 总览：灯效摘要和两路风扇转速
 - 灯光：键盘 RGB 色块、灯效模式、速度和亮度
 - 性能：DCHU 电源模式和风扇模式按钮
-- 诊断：读取 DCHU 状态、风扇表和能力位
+- 诊断：读取 DCHU 只读状态
 - 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
 
 自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
@@ -274,7 +265,7 @@ update-desktop-database ~/.local/share/applications 2>/dev/null || true
 GUI 能打开但灯不变：
 
 ```bash
-ls -l /proc/clevo_kbd_led
+ls -l /proc/clevo_control_center_led
 ```
 
 确认模块已加载，且当前用户可写。

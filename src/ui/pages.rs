@@ -284,7 +284,7 @@ fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn diagnostics_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "诊断", "读取 DCHU 状态、能力位和原始风扇数据");
+    page_header(ui, "诊断", "读取 DCHU 只读硬件状态");
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
         if ui
@@ -292,18 +292,6 @@ fn diagnostics_page(ui: &mut Ui, app: &mut ClevoLedApp) {
             .clicked()
         {
             app.run_dchu_read("status");
-        }
-        if ui
-            .add_sized(vec2(120.0, 34.0), Button::new("风扇表"))
-            .clicked()
-        {
-            app.run_dchu_read("fan-table");
-        }
-        if ui
-            .add_sized(vec2(120.0, 34.0), Button::new("能力位"))
-            .clicked()
-        {
-            app.run_dchu_read("caps");
         }
     });
     ui.add_space(12.0);

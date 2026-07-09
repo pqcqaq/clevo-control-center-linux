@@ -2,10 +2,13 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "remove" || "${1:-}" == "purge" ]]; then
+    if lsmod | grep -q '^clevo_control_center '; then
+        rmmod clevo_control_center 2>/dev/null || true
+    fi
     if lsmod | grep -q '^clevo_kbd_led '; then
         rmmod clevo_kbd_led 2>/dev/null || true
     fi
-    rm -f "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
+    rm -f "/lib/modules/$(uname -r)/extra/clevo_control_center.ko" "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
     depmod -a 2>/dev/null || true
 fi
 

@@ -12,11 +12,14 @@ fi
 
 if command -v make >/dev/null 2>&1 && [[ -d "$KERNEL_BUILD" ]]; then
     make -C "$MODULE_DIR" || true
-    if [[ -f "$MODULE_DIR/clevo_kbd_led.ko" ]]; then
+    if [[ -f "$MODULE_DIR/clevo_control_center.ko" ]]; then
         install -d "/lib/modules/$(uname -r)/extra"
-        install -m 0644 "$MODULE_DIR/clevo_kbd_led.ko" "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko" || true
+        modprobe -r clevo_kbd_led 2>/dev/null || true
+        modprobe -r clevo_control_center 2>/dev/null || true
+        install -m 0644 "$MODULE_DIR/clevo_control_center.ko" "/lib/modules/$(uname -r)/extra/clevo_control_center.ko" || true
+        rm -f "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
         depmod -a || true
-        modprobe clevo_kbd_led || true
+        modprobe clevo_control_center || true
     fi
 else
     echo "clevo-control-center: kernel headers or make missing; module was not built automatically" >&2

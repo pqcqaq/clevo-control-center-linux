@@ -1,4 +1,4 @@
-obj-m += clevo_kbd_led.o
+obj-m += clevo_control_center.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)

@@ -308,20 +308,6 @@ pub(super) fn hardware_details(ui: &mut Ui, app: &ClevoLedApp) {
             snapshot.thermal_raw[2],
             snapshot.thermal_raw[3]
         ));
-        if !snapshot.caps.is_empty() {
-            ui.add_space(8.0);
-            ui.label("caps:");
-            for cap in &snapshot.caps {
-                ui.label(format!("0x{:02x}: {}", cap.function, cap.summary));
-            }
-        }
-        for err in &snapshot.errors {
-            ui.label(
-                RichText::new(err)
-                    .size(12.0)
-                    .color(Color32::from_rgb(221, 126, 93)),
-            );
-        }
     } else if let Some(status) = &app.hardware_status {
         ui.label(
             RichText::new(status)
