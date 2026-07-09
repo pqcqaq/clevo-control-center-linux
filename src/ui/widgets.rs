@@ -170,7 +170,7 @@ fn draw_gauge_label(painter: &egui::Painter, center: Pos2, radius: f32, angle: f
     );
 }
 
-fn fan_load(rpm: u16) -> f32 {
+fn fan_load(rpm: u32) -> f32 {
     (rpm as f32 / 5200.0).clamp(0.0, 1.0)
 }
 

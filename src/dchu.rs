@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_DCHU_CONTROL_PROC_PATH: &str = "/proc/clevo_dchu_control";
 const DEFAULT_DCHU_STATUS_PROC_PATH: &str = "/proc/clevo_dchu_status";
+// Clevo EC reports fan tach period counters; higher real RPM means smaller raw values.
+const FAN_RPM_DIVISOR: u32 = 2_156_220;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FanStatus {
     pub label: String,
-    pub rpm: u16,
+    pub rpm: u32,
     #[serde(default)]
     pub temperature_celsius: Option<u8>,
 }
@@ -30,8 +32,8 @@ impl HardwareSnapshot {
             .enumerate()
             .map(|(index, label)| status_fan(bytes, index, label))
             .collect::<Vec<_>>();
-        let pch_rpm = get_be_u16(bytes, 0x06);
-        if pch_rpm > 0 {
+        let pch_tach = get_be_u16(bytes, 0x06);
+        if pch_tach > 0 {
             fans.push(status_fan(bytes, 2, "PCH 风扇"));
         }
 
@@ -53,7 +55,7 @@ impl HardwareSnapshot {
 fn status_fan(bytes: &[u8], index: usize, label: &str) -> FanStatus {
     FanStatus {
         label: label.to_owned(),
-        rpm: get_be_u16(bytes, 0x02 + index * 2),
+        rpm: fan_rpm_from_tach(get_be_u16(bytes, 0x02 + index * 2)),
         temperature_celsius: fan_temperature(bytes, index),
     }
 }
@@ -136,9 +138,9 @@ fn get_be_u16(bytes: &[u8], offset: usize) -> u16 {
 
 fn print_status(bytes: &[u8]) {
     println!("DCHU 0x0C status");
-    println!("rpm1: {}", get_be_u16(bytes, 0x02));
-    println!("rpm2: {}", get_be_u16(bytes, 0x04));
-    println!("rpm3: {}", get_be_u16(bytes, 0x06));
+    println!("rpm1: {}", fan_rpm_from_tach(get_be_u16(bytes, 0x02)));
+    println!("rpm2: {}", fan_rpm_from_tach(get_be_u16(bytes, 0x04)));
+    println!("rpm3: {}", fan_rpm_from_tach(get_be_u16(bytes, 0x06)));
     println!(
         "cpu_temperature_celsius: {}",
         fan_temperature(bytes, 0)
@@ -219,6 +221,14 @@ pub fn parse_fan_mode(value: &str) -> Result<u32, String> {
     }
 }
 
+pub fn fan_rpm_from_tach(raw_tach: u16) -> u32 {
+    if raw_tach == 0 {
+        0
+    } else {
+        FAN_RPM_DIVISOR / raw_tach as u32
+    }
+}
+
 fn fan_temperature(bytes: &[u8], index: usize) -> Option<u8> {
     let value = match index {
         0 => bytes.get(0x11).copied().unwrap_or_default(),
@@ -287,16 +297,23 @@ mod tests {
     #[test]
     fn hardware_snapshot_uses_two_primary_fans() {
         let mut bytes = vec![0; 0x20];
-        bytes[0x02] = 0x05;
-        bytes[0x03] = 0xdc;
-        bytes[0x04] = 0x06;
-        bytes[0x05] = 0x40;
+        bytes[0x02] = 0x03;
+        bytes[0x03] = 0xde;
+        bytes[0x04] = 0x04;
+        bytes[0x05] = 0x0e;
 
         let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
 
         assert_eq!(snapshot.fans.len(), 2);
-        assert_eq!(snapshot.fans[0].rpm, 1500);
-        assert_eq!(snapshot.fans[1].rpm, 1600);
+        assert_eq!(snapshot.fans[0].rpm, 2178);
+        assert_eq!(snapshot.fans[1].rpm, 2077);
+    }
+
+    #[test]
+    fn fan_rpm_uses_inverse_tach_counter_formula() {
+        assert_eq!(fan_rpm_from_tach(0), 0);
+        assert_eq!(fan_rpm_from_tach(990), 2178);
+        assert!(fan_rpm_from_tach(800) > fan_rpm_from_tach(1200));
     }
 
     #[test]
@@ -312,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn hardware_snapshot_adds_pch_fan_only_when_rpm3_has_data() {
+    fn hardware_snapshot_adds_pch_fan_only_when_third_tach_has_data() {
         let mut bytes = vec![0; 0x20];
         let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
         assert_eq!(snapshot.fans.len(), 2);
@@ -324,7 +341,7 @@ mod tests {
 
         assert_eq!(snapshot.fans.len(), 3);
         assert_eq!(snapshot.fans[2].label, "PCH 风扇");
-        assert_eq!(snapshot.fans[2].rpm, 1800);
+        assert_eq!(snapshot.fans[2].rpm, 1197);
         assert_eq!(snapshot.fans[2].temperature_celsius, Some(51));
     }
 
