@@ -2,14 +2,13 @@ use eframe::egui::{vec2, Button, Color32, ComboBox, Frame, RichText, Slider, Ui}
 
 use super::app::ClevoLedApp;
 use super::widgets::{
-    color_swatch, command_panel, control_group, fan_card, hardware_details, info_tile, page_header,
-    snapshot_age_text,
+    color_swatch, command_panel, control_group, fan_gauge, hardware_details, page_header,
 };
 use crate::dchu::{FanStatus, HardwareSnapshot};
 use crate::model::{ControlPage, Mode, ALL_ZONES};
 
-const FAN_CARD_GAP: f32 = 12.0;
-const TWO_FAN_MIN_WIDTH: f32 = 560.0;
+const GAUGE_GAP: f32 = 18.0;
+const TWO_GAUGE_MIN_WIDTH: f32 = 560.0;
 
 pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     match app.active_page {
@@ -22,82 +21,115 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "总览", "风扇转速和当前灯效配置");
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-        info_tile(
-            ui,
-            "灯效模式",
-            app.mode.label(),
-            Color32::from_rgb(226, 184, 112),
-        );
-        info_tile(
-            ui,
-            "灯效状态",
-            if app.running { "运行" } else { "停止" },
-            Color32::from_rgb(166, 205, 141),
-        );
-        info_tile(
-            ui,
-            "亮度",
-            &format!("{}%", app.brightness),
-            Color32::from_rgb(232, 206, 149),
-        );
-        info_tile(
-            ui,
-            "分区",
-            &format!("{} 个", app.selected_zones().len()),
-            Color32::from_rgb(204, 176, 132),
-        );
-    });
-
-    ui.add_space(18.0);
     let fans = overview_fans(app.hardware.as_ref());
     let available_width = ui.available_width();
-    let width = fan_card_width(available_width);
-    if available_width >= TWO_FAN_MIN_WIDTH {
+    let width = overview_gauge_width(available_width);
+
+    if available_width >= TWO_GAUGE_MIN_WIDTH {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = vec2(FAN_CARD_GAP, 0.0);
-            fan_card(ui, &fans[0], width);
-            fan_card(ui, &fans[1], width);
+            ui.spacing_mut().item_spacing = vec2(GAUGE_GAP, 0.0);
+            fan_gauge(ui, &fans[0], width);
+            fan_gauge(ui, &fans[1], width);
         });
     } else {
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, FAN_CARD_GAP);
+            ui.spacing_mut().item_spacing = vec2(0.0, GAUGE_GAP);
             for fan in &fans {
-                fan_card(ui, fan, width);
+                fan_gauge(ui, fan, width);
             }
         });
     }
 
-    ui.add_space(14.0);
-    if let Some(snapshot) = &app.hardware {
-        ui.label(
-            RichText::new(snapshot_age_text(snapshot))
-                .size(12.0)
-                .color(Color32::from_rgb(126, 120, 110)),
-        );
-    } else if let Some(status) = &app.hardware_status {
-        ui.label(
-            RichText::new(status)
-                .size(12.0)
-                .color(Color32::from_rgb(214, 157, 105)),
-        );
-    } else {
-        ui.label(
-            RichText::new("正在等待硬件状态")
-                .size(12.0)
-                .color(Color32::from_rgb(126, 120, 110)),
-        );
-    }
+    ui.add_space(26.0);
+    overview_controls(ui, app);
 }
 
-fn fan_card_width(available_width: f32) -> f32 {
-    if available_width >= TWO_FAN_MIN_WIDTH {
-        ((available_width - FAN_CARD_GAP) / 2.0).max(260.0)
+fn overview_gauge_width(available_width: f32) -> f32 {
+    if available_width >= TWO_GAUGE_MIN_WIDTH {
+        ((available_width - GAUGE_GAP) / 2.0).max(260.0)
     } else {
         available_width.max(260.0)
     }
+}
+
+fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
+    overview_lighting_mode(ui, app);
+    ui.add_space(12.0);
+    overview_button_row(
+        ui,
+        "电源模式",
+        &[("安静", "0"), ("省电", "1"), ("性能", "2"), ("娱乐", "3")],
+        |mode| app.run_dchu_write(&["power-mode", mode, "--i-understand"]),
+    );
+    ui.add_space(12.0);
+    overview_button_row(
+        ui,
+        "风扇模式",
+        &[
+            ("自动", "auto"),
+            ("最大", "max"),
+            ("静音", "silent"),
+            ("MaxQ", "maxq"),
+            ("Turbo", "turbo"),
+        ],
+        |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
+    );
+}
+
+fn overview_lighting_mode(ui: &mut Ui, app: &mut ClevoLedApp) {
+    ui.horizontal(|ui| {
+        ui.set_width(ui.available_width());
+        overview_row_label(ui, "灯光效果");
+        ComboBox::from_id_salt("overview-lighting-mode")
+            .width(190.0)
+            .selected_text(app.mode.label())
+            .show_ui(ui, |ui| {
+                for mode in Mode::all() {
+                    let old_mode = app.mode;
+                    ui.selectable_value(&mut app.mode, *mode, mode.label());
+                    if app.mode != old_mode {
+                        if app.mode == Mode::Custom {
+                            app.running = false;
+                            app.write_selected_color(app.f0_color);
+                        }
+                        app.mark_settings_dirty();
+                        app.persist_settings_if_due(true);
+                    }
+                }
+            });
+    });
+}
+
+fn overview_button_row<F: FnMut(&str)>(
+    ui: &mut Ui,
+    title: &str,
+    items: &[(&str, &str)],
+    mut action: F,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        overview_row_label(ui, title);
+        for (label, value) in items {
+            if ui
+                .add_sized(vec2(76.0, 30.0), Button::new(*label))
+                .clicked()
+            {
+                action(value);
+            }
+        }
+    });
+}
+
+fn overview_row_label(ui: &mut Ui, label: &str) {
+    ui.add_sized(
+        vec2(78.0, 30.0),
+        egui::Label::new(
+            RichText::new(label)
+                .size(13.0)
+                .strong()
+                .color(Color32::from_rgb(222, 214, 199)),
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -105,9 +137,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fan_card_width_keeps_two_cards_visible_when_space_allows() {
-        assert_eq!(fan_card_width(700.0), 344.0);
-        assert_eq!(fan_card_width(520.0), 520.0);
+    fn overview_gauge_width_keeps_two_gauges_visible_when_space_allows() {
+        assert_eq!(overview_gauge_width(700.0), 341.0);
+        assert_eq!(overview_gauge_width(520.0), 520.0);
     }
 }
 

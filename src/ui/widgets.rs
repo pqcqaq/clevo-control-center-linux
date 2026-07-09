@@ -28,101 +28,25 @@ pub(super) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
     ui.add_space(14.0);
 }
 
-pub(super) fn info_tile(ui: &mut Ui, title: &str, value: &str, accent: Color32) {
-    Frame::none()
-        .fill(Color32::from_rgb(35, 34, 30))
-        .rounding(10.0)
-        .inner_margin(egui::Margin::same(12.0))
-        .show(ui, |ui| {
-            ui.set_min_size(vec2(156.0, 72.0));
-            ui.label(
-                RichText::new(title)
-                    .size(12.0)
-                    .color(Color32::from_rgb(145, 138, 127)),
-            );
-            ui.add_space(8.0);
-            ui.label(RichText::new(value).size(20.0).strong().color(accent));
-        });
-}
-
-pub(super) fn fan_card(ui: &mut Ui, fan: &FanStatus, width: f32) {
-    const CARD_HEIGHT: f32 = 242.0;
-    const INNER_MARGIN: f32 = 16.0;
+pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
+    const GAUGE_HEIGHT: f32 = 238.0;
 
     ui.allocate_ui_with_layout(
-        vec2(width, CARD_HEIGHT),
-        egui::Layout::top_down(egui::Align::Min),
+        vec2(width, GAUGE_HEIGHT),
+        egui::Layout::top_down(egui::Align::Center),
         |ui| {
             ui.set_width(width);
-            Frame::none()
-                .fill(Color32::from_rgb(35, 34, 30))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(66, 58, 45)))
-                .rounding(14.0)
-                .inner_margin(egui::Margin::same(INNER_MARGIN))
-                .show(ui, |ui| {
-                    let inner_width = (width - INNER_MARGIN * 2.0).max(1.0);
-                    ui.set_width(inner_width);
-                    ui.set_min_height(CARD_HEIGHT - INNER_MARGIN * 2.0);
-                    ui.vertical(|ui| {
-                        let (state, state_color) = fan_state(fan.rpm);
-                        ui.horizontal(|ui| {
-                            ui.set_width(inner_width);
-                            ui.label(
-                                RichText::new(&fan.label)
-                                    .size(15.0)
-                                    .strong()
-                                    .color(Color32::from_rgb(236, 230, 218)),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    status_badge(ui, state, state_color);
-                                },
-                            );
-                        });
-
-                        ui.add_space(8.0);
-                        let gauge_width = inner_width.clamp(178.0, 208.0);
-                        let gauge_height = 166.0;
-                        let (rect, _) =
-                            ui.allocate_exact_size(vec2(inner_width, gauge_height), Sense::hover());
-                        let gauge_rect = egui::Rect::from_center_size(
-                            pos2(rect.center().x, rect.top() + gauge_height * 0.52),
-                            vec2(gauge_width, gauge_height),
-                        );
-                        draw_fan_gauge(ui, gauge_rect, fan);
-                    });
-                });
+            ui.label(
+                RichText::new(&fan.label)
+                    .size(15.0)
+                    .strong()
+                    .color(Color32::from_rgb(236, 230, 218)),
+            );
+            ui.add_space(4.0);
+            let (rect, _) = ui.allocate_exact_size(vec2(width, 210.0), Sense::hover());
+            draw_fan_gauge(ui, rect, fan);
         },
     );
-}
-
-fn fan_state(rpm: u16) -> (&'static str, Color32) {
-    match rpm {
-        0 => ("等待数据", Color32::from_rgb(143, 136, 124)),
-        1..=1199 => ("低负载", Color32::from_rgb(130, 185, 123)),
-        1200..=2799 => ("稳定", Color32::from_rgb(226, 184, 112)),
-        _ => ("高转速", Color32::from_rgb(225, 126, 88)),
-    }
-}
-
-fn status_badge(ui: &mut Ui, label: &str, color: Color32) {
-    Frame::none()
-        .fill(Color32::from_rgba_unmultiplied(
-            color.r(),
-            color.g(),
-            color.b(),
-            24,
-        ))
-        .stroke(Stroke::new(
-            1.0,
-            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90),
-        ))
-        .rounding(9.0)
-        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(label).size(12.0).strong().color(color));
-        });
 }
 
 fn draw_fan_gauge(ui: &mut Ui, rect: egui::Rect, fan: &FanStatus) {
@@ -130,17 +54,10 @@ fn draw_fan_gauge(ui: &mut Ui, rect: egui::Rect, fan: &FanStatus) {
     const SWEEP_ANGLE: f32 = PI * 1.36;
 
     let painter = ui.painter_at(rect);
-    let center = pos2(rect.center().x, rect.bottom() - 34.0);
-    let radius = rect.width().min(rect.height() * 1.35) * 0.43;
+    let center = pos2(rect.center().x, rect.top() + 125.0);
+    let radius = rect.width().min(235.0) * 0.34;
     let progress = fan_load(fan.rpm);
     let accent = fan_accent(progress);
-
-    let shell = egui::Rect::from_center_size(
-        center + vec2(0.0, -radius * 0.34),
-        vec2(radius * 2.45, radius * 1.78),
-    );
-    painter.rect_filled(shell, 18.0, Color32::from_rgb(26, 25, 22));
-    painter.rect_stroke(shell, 18.0, Stroke::new(1.0, Color32::from_rgb(62, 55, 44)));
 
     for step in 0..=10 {
         let angle = START_ANGLE + SWEEP_ANGLE * (step as f32 / 10.0);
@@ -199,14 +116,14 @@ fn draw_fan_gauge(ui: &mut Ui, rect: egui::Rect, fan: &FanStatus) {
         fan.rpm.to_string()
     };
     painter.text(
-        center + vec2(0.0, radius * 0.42),
+        center + vec2(0.0, 32.0),
         Align2::CENTER_CENTER,
         rpm_text,
         FontId::proportional(30.0),
         accent,
     );
     painter.text(
-        center + vec2(0.0, radius * 0.69),
+        center + vec2(0.0, 58.0),
         Align2::CENTER_CENTER,
         "RPM",
         FontId::proportional(11.0),
@@ -576,13 +493,5 @@ mod tests {
         assert_eq!(fan_load(0), 0.0);
         assert!((fan_load(2600) - 0.5).abs() < f32::EPSILON);
         assert_eq!(fan_load(9000), 1.0);
-    }
-
-    #[test]
-    fn fan_state_labels_match_rpm_ranges() {
-        assert_eq!(fan_state(0).0, "等待数据");
-        assert_eq!(fan_state(900).0, "低负载");
-        assert_eq!(fan_state(1600).0, "稳定");
-        assert_eq!(fan_state(3200).0, "高转速");
     }
 }
