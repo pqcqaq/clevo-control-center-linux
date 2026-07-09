@@ -148,10 +148,12 @@ fn overview_fans(snapshot: Option<&HardwareSnapshot>) -> [FanStatus; 2] {
         FanStatus {
             label: "CPU 风扇".to_owned(),
             rpm: 0,
+            temperature_celsius: None,
         },
         FanStatus {
             label: "GPU 风扇".to_owned(),
             rpm: 0,
+            temperature_celsius: None,
         },
     ];
 

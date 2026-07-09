@@ -29,7 +29,7 @@ pub(super) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
 }
 
 pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
-    const GAUGE_HEIGHT: f32 = 238.0;
+    const GAUGE_HEIGHT: f32 = 266.0;
 
     ui.allocate_ui_with_layout(
         vec2(width, GAUGE_HEIGHT),
@@ -45,8 +45,22 @@ pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
             ui.add_space(4.0);
             let (rect, _) = ui.allocate_exact_size(vec2(width, 210.0), Sense::hover());
             draw_fan_gauge(ui, rect, fan);
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(fan_temperature_text(fan))
+                    .size(13.0)
+                    .strong()
+                    .color(Color32::from_rgb(222, 214, 199)),
+            );
         },
     );
+}
+
+fn fan_temperature_text(fan: &FanStatus) -> String {
+    match fan.temperature_celsius {
+        Some(temp) => format!("温度 {temp}°C"),
+        None => "温度 --°C".to_owned(),
+    }
 }
 
 fn draw_fan_gauge(ui: &mut Ui, rect: egui::Rect, fan: &FanStatus) {
@@ -479,5 +493,25 @@ mod tests {
         assert_eq!(fan_load(0), 0.0);
         assert!((fan_load(2600) - 0.5).abs() < f32::EPSILON);
         assert_eq!(fan_load(9000), 1.0);
+    }
+
+    #[test]
+    fn fan_temperature_text_formats_missing_and_present_values() {
+        assert_eq!(
+            fan_temperature_text(&FanStatus {
+                label: "CPU 风扇".to_owned(),
+                rpm: 900,
+                temperature_celsius: Some(43),
+            }),
+            "温度 43°C"
+        );
+        assert_eq!(
+            fan_temperature_text(&FanStatus {
+                label: "GPU 风扇".to_owned(),
+                rpm: 0,
+                temperature_celsius: None,
+            }),
+            "温度 --°C"
+        );
     }
 }

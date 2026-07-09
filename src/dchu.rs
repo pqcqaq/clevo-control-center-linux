@@ -10,6 +10,8 @@ const DEFAULT_DCHU_STATUS_PROC_PATH: &str = "/proc/clevo_dchu_status";
 pub struct FanStatus {
     pub label: String,
     pub rpm: u16,
+    #[serde(default)]
+    pub temperature_celsius: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,6 +31,7 @@ impl HardwareSnapshot {
             .map(|(index, label)| FanStatus {
                 label: label.to_owned(),
                 rpm: get_be_u16(bytes, 0x02 + index * 2),
+                temperature_celsius: fan_temperature(bytes, index),
             })
             .collect();
 
@@ -128,6 +131,18 @@ fn print_status(bytes: &[u8]) {
     println!("rpm1: {}", get_be_u16(bytes, 0x02));
     println!("rpm2: {}", get_be_u16(bytes, 0x04));
     println!("rpm3: {}", get_be_u16(bytes, 0x06));
+    println!(
+        "cpu_temperature_celsius: {}",
+        fan_temperature(bytes, 0)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "--".to_owned())
+    );
+    println!(
+        "gpu_temperature_celsius: {}",
+        fan_temperature(bytes, 1)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "--".to_owned())
+    );
     println!("battery_voltage_raw: {}", get_be_u16(bytes, 0x08));
     println!("battery_rate_raw: {}", get_be_u16(bytes, 0x0e));
     println!(
@@ -185,6 +200,19 @@ pub fn parse_fan_mode(value: &str) -> Result<u32, String> {
                 ),
             }
         }
+    }
+}
+
+fn fan_temperature(bytes: &[u8], index: usize) -> Option<u8> {
+    let value = match index {
+        0 => bytes.get(0x11).copied().unwrap_or_default(),
+        1 => bytes.get(0x12).copied().unwrap_or_default(),
+        _ => 0,
+    };
+
+    match value {
+        1..=125 => Some(value),
+        _ => None,
     }
 }
 
@@ -254,6 +282,18 @@ mod tests {
         assert_eq!(snapshot.fans.len(), 2);
         assert_eq!(snapshot.fans[0].rpm, 1500);
         assert_eq!(snapshot.fans[1].rpm, 1600);
+    }
+
+    #[test]
+    fn hardware_snapshot_maps_cpu_and_gpu_temperatures() {
+        let mut bytes = vec![0; 0x20];
+        bytes[0x11] = 43;
+        bytes[0x12] = 47;
+
+        let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
+
+        assert_eq!(snapshot.fans[0].temperature_celsius, Some(43));
+        assert_eq!(snapshot.fans[1].temperature_celsius, Some(47));
     }
 
     #[test]
