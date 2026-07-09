@@ -34,7 +34,6 @@ fn main() -> eframe::Result {
     let mut viewport = ViewportBuilder::default()
         .with_inner_size([960.0, 600.0])
         .with_min_inner_size([860.0, 540.0])
-        .with_decorations(false)
         .with_resizable(true);
 
     if let Some([x, y]) = settings.window_pos {
@@ -47,7 +46,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "",
+        "Clevo Control Center",
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());

@@ -1,0 +1,347 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
+
+use eframe::egui::{CentralPanel, Color32, Context, Frame};
+
+use super::layout;
+use crate::dchu::{self, HardwareSnapshot};
+use crate::led::LedWriter;
+use crate::model::{normalize_zones, ControlPage, Mode, Rgb, ZoneColor, ZoneId};
+use crate::settings::{
+    atomic_write_hardware_snapshot, atomic_write_settings, file_modified, hardware_snapshot_path,
+    load_hardware_snapshot, load_settings, Settings,
+};
+
+pub struct ClevoLedApp {
+    writer: LedWriter,
+    settings_path: PathBuf,
+    settings_mtime: Option<SystemTime>,
+    hardware_snapshot_path: PathBuf,
+    hardware_snapshot_mtime: Option<SystemTime>,
+    pub(super) hardware: Option<HardwareSnapshot>,
+    pub(super) hardware_status: Option<String>,
+    last_hardware_sync: Instant,
+    pub(super) active_page: ControlPage,
+    pub(super) mode: Mode,
+    pub(super) speed: u8,
+    pub(super) brightness: u8,
+    pub(super) running: bool,
+    pub(super) f0_color: Rgb,
+    pub(super) zones: Vec<ZoneId>,
+    pub(super) last_error: Option<String>,
+    pub(super) command_output: String,
+    pub(super) command_status: Option<String>,
+    window_pos: Option<[f32; 2]>,
+    dirty_settings: bool,
+    dirty_window_position: bool,
+    last_settings_save: Instant,
+}
+
+impl ClevoLedApp {
+    pub fn new(settings_path: PathBuf, settings: Settings) -> Self {
+        let writer = LedWriter::new();
+        if !writer.ready() {
+            eprintln!(
+                "Keyboard RGB interface is not writable: {}",
+                writer.proc_path().display()
+            );
+        }
+
+        let hardware_snapshot_path = hardware_snapshot_path();
+        let hardware =
+            wait_for_hardware_snapshot(&hardware_snapshot_path, Duration::from_millis(1200));
+        let hardware_snapshot_mtime = file_modified(&hardware_snapshot_path);
+        let hardware_status = if hardware.is_none() {
+            Some("正在等待风扇数据".to_owned())
+        } else {
+            None
+        };
+        let mut app = Self {
+            writer,
+            settings_path,
+            settings_mtime: None,
+            hardware_snapshot_path,
+            hardware_snapshot_mtime,
+            hardware,
+            hardware_status,
+            last_hardware_sync: Instant::now() - Duration::from_secs(2),
+            active_page: ControlPage::Overview,
+            mode: settings.mode,
+            speed: settings.speed,
+            brightness: settings.brightness,
+            running: settings.running,
+            f0_color: settings.f0_color,
+            zones: settings.zones,
+            last_error: None,
+            command_output: String::new(),
+            command_status: None,
+            window_pos: settings.window_pos,
+            dirty_settings: false,
+            dirty_window_position: false,
+            last_settings_save: Instant::now(),
+        };
+        app.settings_mtime = file_modified(&app.settings_path);
+        app
+    }
+
+    pub(super) fn toggle(&mut self) {
+        if self.mode == Mode::Custom {
+            return;
+        }
+
+        self.running = !self.running;
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+    }
+
+    pub(super) fn selected_zones(&self) -> Vec<ZoneId> {
+        normalize_zones(&self.zones)
+    }
+
+    pub(super) fn set_zone_enabled(&mut self, zone: ZoneId, enabled: bool) {
+        if enabled {
+            if !self.zones.contains(&zone) {
+                self.zones.push(zone);
+            }
+        } else if self.zones.len() > 1 {
+            self.zones.retain(|item| *item != zone);
+        }
+        self.zones = normalize_zones(&self.zones);
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+        if self.mode == Mode::Custom {
+            self.write_selected_color(self.f0_color);
+        }
+    }
+
+    pub(super) fn write_selected_color(&mut self, rgb: Rgb) {
+        let colors = self
+            .selected_zones()
+            .into_iter()
+            .map(|zone| ZoneColor { zone, rgb })
+            .collect::<Vec<_>>();
+
+        if let Err(err) = self.writer.write(&colors) {
+            self.last_error = Some(err.to_string());
+            self.running = false;
+            eprintln!("Failed to write selected color: {err}");
+        }
+    }
+
+    pub(super) fn run_dchu_read(&mut self, command: &str) {
+        self.run_dchu_command(&["dchu", command]);
+    }
+
+    pub(super) fn run_dchu_write(&mut self, args: &[&str]) {
+        let mut command_args = vec!["dchu"];
+        command_args.extend_from_slice(args);
+        self.run_dchu_command(&command_args);
+    }
+
+    fn run_dchu_command(&mut self, args: &[&str]) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(err) => {
+                self.command_status = Some("无法定位程序".to_owned());
+                self.command_output = err.to_string();
+                return;
+            }
+        };
+
+        let output = Command::new(exe).args(args).output();
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                self.command_output = format!("{stdout}{stderr}");
+                self.command_status = Some(if output.status.success() {
+                    "命令执行完成".to_owned()
+                } else {
+                    format!("命令失败: {}", output.status)
+                });
+                if output.status.success() {
+                    self.refresh_hardware_snapshot(false);
+                }
+            }
+            Err(err) => {
+                self.command_status = Some("命令启动失败".to_owned());
+                self.command_output = err.to_string();
+            }
+        }
+    }
+
+    pub(super) fn refresh_hardware_snapshot(&mut self, user_visible: bool) {
+        match dchu::read_hardware_snapshot() {
+            Ok(snapshot) => {
+                if let Err(err) =
+                    atomic_write_hardware_snapshot(&self.hardware_snapshot_path, &snapshot)
+                {
+                    eprintln!(
+                        "Failed to write {}: {err}",
+                        self.hardware_snapshot_path.display()
+                    );
+                }
+                self.hardware = Some(snapshot);
+                self.hardware_snapshot_mtime = file_modified(&self.hardware_snapshot_path);
+                if user_visible {
+                    self.hardware_status = Some("硬件状态已更新".to_owned());
+                } else {
+                    self.hardware_status = None;
+                }
+            }
+            Err(err) => {
+                if user_visible || self.hardware.is_none() {
+                    self.hardware_status = Some(format!("硬件状态暂不可用: {err}"));
+                }
+            }
+        }
+    }
+
+    fn sync_hardware_snapshot(&mut self) {
+        if self.last_hardware_sync.elapsed() < Duration::from_millis(600) {
+            return;
+        }
+        self.last_hardware_sync = Instant::now();
+
+        let mtime = file_modified(&self.hardware_snapshot_path);
+        if mtime.is_none() || mtime == self.hardware_snapshot_mtime {
+            return;
+        }
+
+        if let Some(snapshot) = load_hardware_snapshot(&self.hardware_snapshot_path) {
+            self.hardware = Some(snapshot);
+            self.hardware_status = None;
+            self.hardware_snapshot_mtime = mtime;
+        }
+    }
+
+    pub(super) fn mark_settings_dirty(&mut self) {
+        self.dirty_settings = true;
+    }
+
+    fn apply_external_settings(&mut self, settings: Settings) {
+        self.mode = settings.mode;
+        self.speed = settings.speed;
+        self.brightness = settings.brightness;
+        self.running = settings.running;
+        self.f0_color = settings.f0_color;
+        self.zones = settings.zones;
+    }
+
+    fn sync_external_settings(&mut self) {
+        if self.dirty_settings {
+            return;
+        }
+
+        let mtime = file_modified(&self.settings_path);
+        if mtime.is_none() || mtime == self.settings_mtime {
+            return;
+        }
+
+        let settings = load_settings(&self.settings_path);
+        self.apply_external_settings(settings);
+        self.settings_mtime = mtime;
+    }
+
+    fn update_window_position(&mut self, ctx: &Context) {
+        let position = ctx.input(|input| {
+            input
+                .viewport()
+                .outer_rect
+                .map(|rect| [rect.min.x, rect.min.y])
+        });
+
+        if let Some(position) = position {
+            let changed = self
+                .window_pos
+                .map(|old| (old[0] - position[0]).abs() > 0.5 || (old[1] - position[1]).abs() > 0.5)
+                .unwrap_or(true);
+            if changed {
+                self.window_pos = Some(position);
+                self.dirty_window_position = true;
+            }
+        }
+    }
+
+    pub(super) fn persist_settings_if_due(&mut self, force: bool) {
+        if !self.dirty_settings && !self.dirty_window_position && !force {
+            return;
+        }
+        if !force && self.last_settings_save.elapsed() < Duration::from_millis(700) {
+            return;
+        }
+        self.persist_settings();
+    }
+
+    fn persist_settings(&mut self) {
+        let mut settings = if self.dirty_settings {
+            Settings {
+                mode: self.mode,
+                speed: self.speed,
+                brightness: self.brightness,
+                running: self.running && self.mode != Mode::Custom,
+                f0_color: self.f0_color,
+                zones: self.selected_zones(),
+                window_pos: self.window_pos,
+            }
+        } else {
+            load_settings(&self.settings_path)
+        };
+
+        settings.window_pos = self.window_pos;
+        settings = settings.sanitized();
+        let should_apply_local_state = self.dirty_settings;
+
+        match atomic_write_settings(&self.settings_path, &settings) {
+            Ok(()) => {
+                self.dirty_settings = false;
+                self.dirty_window_position = false;
+                self.last_settings_save = Instant::now();
+                self.settings_mtime = file_modified(&self.settings_path);
+                if !should_apply_local_state {
+                    self.apply_external_settings(settings);
+                }
+            }
+            Err(err) => {
+                eprintln!("Failed to write {}: {err}", self.settings_path.display());
+                self.last_settings_save = Instant::now();
+            }
+        }
+    }
+}
+
+fn wait_for_hardware_snapshot(path: &Path, timeout: Duration) -> Option<HardwareSnapshot> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(snapshot) = load_hardware_snapshot(path) {
+            return Some(snapshot);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(75));
+    }
+}
+
+impl eframe::App for ClevoLedApp {
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.sync_external_settings();
+        self.sync_hardware_snapshot();
+        self.update_window_position(ctx);
+
+        CentralPanel::default()
+            .frame(Frame::none().fill(Color32::from_rgb(20, 20, 18)))
+            .show(ctx, |ui| {
+                layout::control_center(ui, self);
+            });
+
+        self.persist_settings_if_due(false);
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.persist_settings_if_due(true);
+    }
+}
