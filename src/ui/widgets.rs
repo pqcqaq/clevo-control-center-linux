@@ -1,11 +1,12 @@
+use std::f32::consts::PI;
 use std::fs;
 use std::io;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{
-    self, vec2, Button, Color32, Context, FontData, FontDefinitions, FontFamily, Frame, RichText,
-    ScrollArea, Sense, Stroke, Ui,
+    self, pos2, vec2, Align2, Button, Color32, Context, FontData, FontDefinitions, FontFamily,
+    FontId, Frame, Pos2, RichText, ScrollArea, Sense, Shape, Stroke, Ui,
 };
 
 use super::app::ClevoLedApp;
@@ -51,40 +52,201 @@ pub(super) fn fan_card(ui: &mut Ui, fan: &FanStatus, width: f32) {
         .rounding(14.0)
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            ui.set_min_size(vec2(width, 156.0));
-            ui.label(
-                RichText::new(&fan.label)
-                    .size(15.0)
-                    .strong()
-                    .color(Color32::from_rgb(236, 230, 218)),
-            );
-            ui.add_space(14.0);
-            ui.label(
-                RichText::new(if fan.rpm == 0 {
-                    "-- RPM".to_owned()
-                } else {
-                    format!("{} RPM", fan.rpm)
-                })
-                .size(36.0)
-                .strong()
-                .color(Color32::from_rgb(231, 176, 96)),
-            );
-            ui.add_space(12.0);
-            let width = ui.available_width();
-            let (rect, _) = ui.allocate_exact_size(vec2(width, 12.0), Sense::hover());
-            let fill_width = if fan.rpm == 0 {
-                0.0
-            } else {
-                (fan.rpm as f32 / 5200.0).clamp(0.08, 1.0) * rect.width()
-            };
-            let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 6.0, Color32::from_rgb(22, 21, 19));
-            painter.rect_filled(
-                egui::Rect::from_min_size(rect.min, vec2(fill_width, rect.height())),
-                6.0,
-                Color32::from_rgb(184, 126, 58),
-            );
+            ui.set_min_size(vec2(width, 226.0));
+            ui.vertical(|ui| {
+                let (state, state_color) = fan_state(fan.rpm);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&fan.label)
+                            .size(15.0)
+                            .strong()
+                            .color(Color32::from_rgb(236, 230, 218)),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_badge(ui, state, state_color);
+                    });
+                });
+
+                ui.add_space(8.0);
+                let gauge_side = ui.available_width().clamp(166.0, 188.0);
+                let (rect, _) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), gauge_side + 6.0),
+                    Sense::hover(),
+                );
+                let gauge_rect = egui::Rect::from_center_size(
+                    pos2(rect.center().x, rect.top() + gauge_side * 0.5),
+                    vec2(gauge_side, gauge_side),
+                );
+                draw_fan_gauge(ui, gauge_rect, fan);
+            });
         });
+}
+
+fn fan_state(rpm: u16) -> (&'static str, Color32) {
+    match rpm {
+        0 => ("等待数据", Color32::from_rgb(143, 136, 124)),
+        1..=1199 => ("低负载", Color32::from_rgb(130, 185, 123)),
+        1200..=2799 => ("稳定", Color32::from_rgb(226, 184, 112)),
+        _ => ("高转速", Color32::from_rgb(225, 126, 88)),
+    }
+}
+
+fn status_badge(ui: &mut Ui, label: &str, color: Color32) {
+    Frame::none()
+        .fill(Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            24,
+        ))
+        .stroke(Stroke::new(
+            1.0,
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90),
+        ))
+        .rounding(9.0)
+        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(label).size(12.0).strong().color(color));
+        });
+}
+
+fn draw_fan_gauge(ui: &mut Ui, rect: egui::Rect, fan: &FanStatus) {
+    const START_ANGLE: f32 = PI * 0.75;
+    const SWEEP_ANGLE: f32 = PI * 1.5;
+
+    let painter = ui.painter_at(rect);
+    let center = rect.center();
+    let radius = rect.width().min(rect.height()) * 0.41;
+    let progress = fan_load(fan.rpm);
+    let accent = fan_accent(progress);
+
+    painter.circle_filled(center, radius + 18.0, Color32::from_rgb(26, 25, 22));
+    painter.circle_stroke(
+        center,
+        radius + 18.0,
+        Stroke::new(1.0, Color32::from_rgb(62, 55, 44)),
+    );
+
+    for step in 0..=10 {
+        let angle = START_ANGLE + SWEEP_ANGLE * (step as f32 / 10.0);
+        let outer = point_on_circle(center, radius + 14.0, angle);
+        let inner = point_on_circle(
+            center,
+            radius + if step % 5 == 0 { 2.0 } else { 7.0 },
+            angle,
+        );
+        painter.line_segment(
+            [inner, outer],
+            Stroke::new(
+                if step % 5 == 0 { 1.6 } else { 1.0 },
+                Color32::from_rgb(98, 87, 68),
+            ),
+        );
+    }
+
+    draw_arc(
+        &painter,
+        center,
+        radius,
+        START_ANGLE,
+        SWEEP_ANGLE,
+        Stroke::new(10.0, Color32::from_rgb(47, 43, 36)),
+    );
+    if progress > 0.0 {
+        draw_arc(
+            &painter,
+            center,
+            radius,
+            START_ANGLE,
+            SWEEP_ANGLE * progress,
+            Stroke::new(10.0, accent),
+        );
+    }
+
+    painter.circle_filled(center, radius * 0.53, Color32::from_rgb(18, 17, 15));
+    painter.circle_stroke(
+        center,
+        radius * 0.53,
+        Stroke::new(1.0, Color32::from_rgb(68, 60, 48)),
+    );
+    draw_fan_blades(ui, center, radius * 0.34, fan.rpm, accent);
+
+    let rpm_text = if fan.rpm == 0 {
+        "--".to_owned()
+    } else {
+        fan.rpm.to_string()
+    };
+    painter.text(
+        center + vec2(0.0, radius * 0.70),
+        Align2::CENTER_CENTER,
+        rpm_text,
+        FontId::proportional(31.0),
+        accent,
+    );
+    painter.text(
+        center + vec2(0.0, radius * 1.02),
+        Align2::CENTER_CENTER,
+        "RPM",
+        FontId::proportional(11.0),
+        Color32::from_rgb(145, 138, 127),
+    );
+}
+
+fn draw_fan_blades(ui: &Ui, center: Pos2, radius: f32, rpm: u16, accent: Color32) {
+    let phase = if rpm == 0 {
+        0.0
+    } else {
+        ui.input(|input| input.time as f32) * (0.7 + rpm as f32 / 900.0)
+    };
+    let painter = ui.painter();
+    for blade in 0..3 {
+        let angle = phase + blade as f32 * PI * 2.0 / 3.0;
+        let tip = point_on_circle(center, radius, angle);
+        let left = point_on_circle(center, radius * 0.28, angle + PI * 0.42);
+        let right = point_on_circle(center, radius * 0.42, angle - PI * 0.32);
+        painter.add(Shape::convex_polygon(
+            vec![center, left, tip, right],
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 78),
+            Stroke::NONE,
+        ));
+    }
+    painter.circle_filled(center, radius * 0.22, accent);
+}
+
+fn fan_load(rpm: u16) -> f32 {
+    (rpm as f32 / 5200.0).clamp(0.0, 1.0)
+}
+
+fn fan_accent(progress: f32) -> Color32 {
+    if progress >= 0.54 {
+        Color32::from_rgb(225, 126, 88)
+    } else if progress >= 0.23 {
+        Color32::from_rgb(231, 176, 96)
+    } else {
+        Color32::from_rgb(154, 194, 132)
+    }
+}
+
+fn draw_arc(
+    painter: &egui::Painter,
+    center: Pos2,
+    radius: f32,
+    start_angle: f32,
+    sweep_angle: f32,
+    stroke: Stroke,
+) {
+    let segments = ((sweep_angle.abs() / (PI * 2.0)) * 96.0).ceil().max(8.0) as usize;
+    let points = (0..=segments)
+        .map(|index| {
+            let t = index as f32 / segments as f32;
+            point_on_circle(center, radius, start_angle + sweep_angle * t)
+        })
+        .collect::<Vec<_>>();
+    painter.add(Shape::line(points, stroke));
+}
+
+fn point_on_circle(center: Pos2, radius: f32, angle: f32) -> Pos2 {
+    center + vec2(angle.cos() * radius, angle.sin() * radius)
 }
 
 pub(super) fn control_group<F: FnMut(&str)>(
@@ -381,5 +543,20 @@ mod tests {
             })
         );
         assert_eq!(parse_color_picker_output(""), None);
+    }
+
+    #[test]
+    fn fan_load_clamps_to_gauge_range() {
+        assert_eq!(fan_load(0), 0.0);
+        assert!((fan_load(2600) - 0.5).abs() < f32::EPSILON);
+        assert_eq!(fan_load(9000), 1.0);
+    }
+
+    #[test]
+    fn fan_state_labels_match_rpm_ranges() {
+        assert_eq!(fan_state(0).0, "等待数据");
+        assert_eq!(fan_state(900).0, "低负载");
+        assert_eq!(fan_state(1600).0, "稳定");
+        assert_eq!(fan_state(3200).0, "高转速");
     }
 }
