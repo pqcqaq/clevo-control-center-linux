@@ -93,6 +93,7 @@
 - Windows 当前环境调用 `GetDCHU_Data_Buffer(0x0D)` 返回 0，说明本机 DeviceIoControl 没拿到 DCHU 返回，不把这次 Windows 返回当作硬件数据。
 - 远端 Linux 上临时编译只读 probe 模块，调用 `\_SB.DCHU._DSM`，只读确认如下：
   - `0x0C` 返回 256 字节 buffer，包含三路风扇 raw tach 计数等实时状态字段；raw tach 需要按 `2156220 / raw_tach` 换算成 RPM。一次样本：`tach1=0x026e` -> `3466 RPM`、`tach2=0x02be` -> `3071 RPM`、`tach3=0x0000`。
+  - `0x0C` buffer 的 `0x10..0x15` 是实测温度样字段；`0x11`/`0x12` 与 Linux CPU/GPU 传感器读数交叉匹配，其他字段暂按 offset 展示，不硬编码具体硬件名称。
   - `0x0D` 返回 256 字节 buffer，包含键盘颜色、`FANQ`、`KBTP` 和三组风扇曲线表。一次样本：`FANQ=0x02`、`KBTP=0x06`。
   - `0x10` 返回 integer `0x93`，对应 DSDT 中 `PSF5` 能力掩码结果。
   - `0x52` 返回 integer `0x04680025`，对应 `PSF1`。

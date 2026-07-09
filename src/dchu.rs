@@ -11,14 +11,29 @@ const FAN_RPM_DIVISOR: u32 = 2_156_220;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FanStatus {
     pub label: String,
+    #[serde(default)]
+    pub raw_tach: u16,
     pub rpm: u32,
     #[serde(default)]
     pub temperature_celsius: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TemperatureSensor {
+    pub label: String,
+    pub offset: usize,
+    pub raw: u8,
+    #[serde(default)]
+    pub celsius: Option<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HardwareSnapshot {
     pub fans: Vec<FanStatus>,
+    #[serde(default)]
+    pub temperature_sensors: Vec<TemperatureSensor>,
+    #[serde(default)]
+    pub raw_status: Vec<u8>,
     pub battery_voltage_raw: u16,
     pub battery_rate_raw: u16,
     pub thermal_raw: [u8; 4],
@@ -39,6 +54,8 @@ impl HardwareSnapshot {
 
         Self {
             fans,
+            temperature_sensors: temperature_sensors(bytes),
+            raw_status: bytes.to_vec(),
             battery_voltage_raw: get_be_u16(bytes, 0x08),
             battery_rate_raw: get_be_u16(bytes, 0x0e),
             thermal_raw: [
@@ -53,9 +70,11 @@ impl HardwareSnapshot {
 }
 
 fn status_fan(bytes: &[u8], index: usize, label: &str) -> FanStatus {
+    let raw_tach = get_be_u16(bytes, 0x02 + index * 2);
     FanStatus {
         label: label.to_owned(),
-        rpm: fan_rpm_from_tach(get_be_u16(bytes, 0x02 + index * 2)),
+        raw_tach,
+        rpm: fan_rpm_from_tach(raw_tach),
         temperature_celsius: fan_temperature(bytes, index),
     }
 }
@@ -237,6 +256,34 @@ fn fan_temperature(bytes: &[u8], index: usize) -> Option<u8> {
         _ => 0,
     };
 
+    plausible_temperature(value)
+}
+
+fn temperature_sensors(bytes: &[u8]) -> Vec<TemperatureSensor> {
+    (0x10..=0x15)
+        .map(|offset| {
+            let raw = bytes.get(offset).copied().unwrap_or_default();
+            TemperatureSensor {
+                label: temperature_sensor_label(offset).to_owned(),
+                offset,
+                raw,
+                celsius: plausible_temperature(raw),
+            }
+        })
+        .collect()
+}
+
+fn temperature_sensor_label(offset: usize) -> &'static str {
+    match offset {
+        0x11 => "CPU 温度",
+        0x12 => "GPU 温度",
+        0x13 => "第三路温度/PCH 候选",
+        0x10 | 0x14 | 0x15 => "EC 温度传感器",
+        _ => "未知温度传感器",
+    }
+}
+
+fn plausible_temperature(value: u8) -> Option<u8> {
     match value {
         1..=125 => Some(value),
         _ => None,
@@ -305,7 +352,9 @@ mod tests {
         let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
 
         assert_eq!(snapshot.fans.len(), 2);
+        assert_eq!(snapshot.fans[0].raw_tach, 990);
         assert_eq!(snapshot.fans[0].rpm, 2178);
+        assert_eq!(snapshot.fans[1].raw_tach, 1038);
         assert_eq!(snapshot.fans[1].rpm, 2077);
     }
 
@@ -319,13 +368,25 @@ mod tests {
     #[test]
     fn hardware_snapshot_maps_cpu_and_gpu_temperatures() {
         let mut bytes = vec![0; 0x20];
+        bytes[0x10] = 81;
         bytes[0x11] = 43;
         bytes[0x12] = 47;
+        bytes[0x13] = 82;
+        bytes[0x14] = 48;
+        bytes[0x15] = 49;
 
         let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
 
         assert_eq!(snapshot.fans[0].temperature_celsius, Some(43));
         assert_eq!(snapshot.fans[1].temperature_celsius, Some(47));
+        assert_eq!(snapshot.raw_status, bytes);
+        assert_eq!(snapshot.temperature_sensors.len(), 6);
+        assert_eq!(snapshot.temperature_sensors[1].label, "CPU 温度");
+        assert_eq!(snapshot.temperature_sensors[1].offset, 0x11);
+        assert_eq!(snapshot.temperature_sensors[1].raw, 43);
+        assert_eq!(snapshot.temperature_sensors[1].celsius, Some(43));
+        assert_eq!(snapshot.temperature_sensors[5].offset, 0x15);
+        assert_eq!(snapshot.temperature_sensors[5].celsius, Some(49));
     }
 
     #[test]

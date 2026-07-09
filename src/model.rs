@@ -133,6 +133,27 @@ impl ControlPage {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdvancedTab {
+    Fans,
+    Temperatures,
+    Other,
+}
+
+impl AdvancedTab {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fans => "风扇信息",
+            Self::Temperatures => "温度信息",
+            Self::Other => "其他信息",
+        }
+    }
+
+    pub fn all() -> &'static [Self] {
+        &[Self::Fans, Self::Temperatures, Self::Other]
+    }
+}
+
 #[derive(Clone)]
 pub struct ZoneColor {
     pub zone: ZoneId,

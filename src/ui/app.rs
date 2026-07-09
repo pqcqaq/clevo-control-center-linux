@@ -11,7 +11,7 @@ use eframe::egui::{
 use super::layout;
 use crate::dchu::{self, HardwareSnapshot};
 use crate::led::LedWriter;
-use crate::model::{normalize_zones, ControlPage, Mode, Rgb, ZoneColor, ZoneId};
+use crate::model::{normalize_zones, AdvancedTab, ControlPage, Mode, Rgb, ZoneColor, ZoneId};
 use crate::settings::{
     atomic_write_hardware_snapshot, atomic_write_settings, file_modified, hardware_snapshot_path,
     load_hardware_snapshot, load_settings, Settings,
@@ -27,6 +27,8 @@ pub struct ClevoLedApp {
     pub(super) hardware_status: Option<String>,
     last_hardware_sync: Instant,
     pub(super) active_page: ControlPage,
+    pub(super) overview_advanced_open: bool,
+    pub(super) overview_advanced_tab: AdvancedTab,
     pub(super) mode: Mode,
     pub(super) speed: u8,
     pub(super) brightness: u8,
@@ -71,6 +73,8 @@ impl ClevoLedApp {
             hardware_status,
             last_hardware_sync: Instant::now() - Duration::from_secs(2),
             active_page: ControlPage::Overview,
+            overview_advanced_open: false,
+            overview_advanced_tab: AdvancedTab::Fans,
             mode: settings.mode,
             speed: settings.speed,
             brightness: settings.brightness,

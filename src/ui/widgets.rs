@@ -500,6 +500,7 @@ mod tests {
         assert_eq!(
             fan_temperature_text(&FanStatus {
                 label: "CPU 风扇".to_owned(),
+                raw_tach: 0,
                 rpm: 900,
                 temperature_celsius: Some(43),
             }),
@@ -508,6 +509,7 @@ mod tests {
         assert_eq!(
             fan_temperature_text(&FanStatus {
                 label: "GPU 风扇".to_owned(),
+                raw_tach: 0,
                 rpm: 0,
                 temperature_celsius: None,
             }),

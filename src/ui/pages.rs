@@ -1,11 +1,12 @@
 use eframe::egui::{vec2, Button, Color32, ComboBox, Frame, RichText, Slider, Ui};
 
+use super::advanced;
 use super::app::ClevoLedApp;
 use super::widgets::{
     color_swatch, command_panel, control_group, fan_gauge, hardware_details, page_header,
 };
 use crate::dchu::{FanStatus, HardwareSnapshot};
-use crate::model::{ControlPage, Mode, ALL_ZONES};
+use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
 const GAUGE_GAP: f32 = 18.0;
 const MIN_GAUGE_WIDTH: f32 = 260.0;
@@ -49,6 +50,8 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 
     ui.add_space(26.0);
     overview_controls(ui, app);
+    ui.add_space(18.0);
+    overview_advanced(ui, app);
 }
 
 fn overview_gauge_columns(available_width: f32, fan_count: usize) -> usize {
@@ -148,6 +151,60 @@ fn overview_row_label(ui: &mut Ui, label: &str) {
     );
 }
 
+fn overview_advanced(ui: &mut Ui, app: &mut ClevoLedApp) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("高级")
+                .size(15.0)
+                .strong()
+                .color(Color32::from_rgb(236, 230, 218)),
+        );
+        let label = if app.overview_advanced_open {
+            "收起"
+        } else {
+            "展开"
+        };
+        if ui.add_sized(vec2(74.0, 30.0), Button::new(label)).clicked() {
+            app.overview_advanced_open = !app.overview_advanced_open;
+        }
+    });
+
+    if !app.overview_advanced_open {
+        return;
+    }
+
+    ui.add_space(8.0);
+    Frame::none()
+        .fill(Color32::from_rgb(35, 34, 30))
+        .rounding(10.0)
+        .inner_margin(egui::Margin::same(14.0))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                for tab in AdvancedTab::all() {
+                    let selected = app.overview_advanced_tab == *tab;
+                    let fill = if selected {
+                        Color32::from_rgb(69, 51, 28)
+                    } else {
+                        Color32::from_rgb(28, 27, 24)
+                    };
+                    if ui
+                        .add_sized(vec2(104.0, 30.0), Button::new(tab.label()).fill(fill))
+                        .clicked()
+                    {
+                        app.overview_advanced_tab = *tab;
+                    }
+                }
+            });
+            ui.add_space(12.0);
+            match app.overview_advanced_tab {
+                AdvancedTab::Fans => advanced::fan_info(ui, app.hardware.as_ref()),
+                AdvancedTab::Temperatures => advanced::temperature_info(ui, app.hardware.as_ref()),
+                AdvancedTab::Other => advanced::other_info(ui, app.hardware.as_ref()),
+            }
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,11 +229,13 @@ fn overview_fans(snapshot: Option<&HardwareSnapshot>) -> Vec<FanStatus> {
     let mut fans = vec![
         FanStatus {
             label: "CPU 风扇".to_owned(),
+            raw_tach: 0,
             rpm: 0,
             temperature_celsius: None,
         },
         FanStatus {
             label: "GPU 风扇".to_owned(),
+            raw_tach: 0,
             rpm: 0,
             temperature_celsius: None,
         },
