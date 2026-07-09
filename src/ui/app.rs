@@ -3,7 +3,10 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use eframe::egui::{CentralPanel, Color32, Context, Frame};
+use eframe::egui::{
+    pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, Frame, Rect, RichText,
+    Sense, Stroke, Ui, ViewportCommand,
+};
 
 use super::layout;
 use crate::dchu::{self, HardwareSnapshot};
@@ -334,7 +337,11 @@ impl eframe::App for ClevoLedApp {
         CentralPanel::default()
             .frame(Frame::none().fill(Color32::from_rgb(20, 20, 18)))
             .show(ctx, |ui| {
-                layout::control_center(ui, self);
+                ui.vertical(|ui| {
+                    custom_title_bar(ui, ctx);
+                    ui.add_space(8.0);
+                    layout::control_center(ui, self);
+                });
             });
 
         self.persist_settings_if_due(false);
@@ -343,5 +350,53 @@ impl eframe::App for ClevoLedApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.persist_settings_if_due(true);
+    }
+}
+
+fn custom_title_bar(ui: &mut Ui, ctx: &Context) {
+    const TITLE_BAR_HEIGHT: f32 = 38.0;
+    const CLOSE_SIZE: f32 = 26.0;
+
+    let width = ui.available_width().max(1.0);
+    let (rect, drag_response) =
+        ui.allocate_exact_size(vec2(width, TITLE_BAR_HEIGHT), Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(18, 18, 16));
+    painter.line_segment(
+        [
+            pos2(rect.left(), rect.bottom()),
+            pos2(rect.right(), rect.bottom()),
+        ],
+        Stroke::new(1.0, Color32::from_rgb(43, 40, 35)),
+    );
+    painter.text(
+        pos2(rect.left() + 14.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Clevo Control Center",
+        FontId::proportional(14.0),
+        Color32::from_rgb(226, 219, 207),
+    );
+
+    let close_rect = Rect::from_min_size(
+        pos2(rect.right() - CLOSE_SIZE - 10.0, rect.top() + 6.0),
+        vec2(CLOSE_SIZE, CLOSE_SIZE),
+    );
+    let close_response = ui.put(
+        close_rect,
+        Button::new(
+            RichText::new("x")
+                .size(14.0)
+                .strong()
+                .color(Color32::from_rgb(220, 214, 204)),
+        )
+        .fill(Color32::from_rgb(40, 37, 32))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(62, 56, 47))),
+    );
+
+    if close_response.clicked() {
+        ctx.send_viewport_cmd(ViewportCommand::Close);
+    } else if drag_response.drag_started() && !close_response.hovered() {
+        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
     }
 }

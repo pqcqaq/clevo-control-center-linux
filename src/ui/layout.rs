@@ -25,23 +25,25 @@ fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
         .show(ui, |ui| {
             ui.set_width(SIDEBAR_WIDTH);
             ui.set_min_height(height.max(420.0));
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new("蓝天控制中心")
-                    .size(18.0)
-                    .strong()
-                    .color(Color32::from_rgb(239, 234, 223)),
-            );
-            ui.label(
-                RichText::new("Linux Edition")
-                    .size(12.0)
-                    .color(Color32::from_rgb(139, 133, 122)),
-            );
-            ui.add_space(22.0);
-            for page in ControlPage::all() {
-                nav_button(ui, app, *page);
-                ui.add_space(7.0);
-            }
+            ui.vertical(|ui| {
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("蓝天控制中心")
+                        .size(18.0)
+                        .strong()
+                        .color(Color32::from_rgb(239, 234, 223)),
+                );
+                ui.label(
+                    RichText::new("Linux Edition")
+                        .size(12.0)
+                        .color(Color32::from_rgb(139, 133, 122)),
+                );
+                ui.add_space(22.0);
+                for page in ControlPage::all() {
+                    nav_button(ui, app, *page);
+                    ui.add_space(7.0);
+                }
+            });
         });
 }
 
@@ -78,8 +80,10 @@ fn content_panel(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
         .show(ui, |ui| {
             ui.set_width(width);
             ui.set_min_height(height.max(420.0));
-            ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| pages::show_active_page(ui, app));
+            ui.vertical(|ui| {
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| pages::show_active_page(ui, app));
+            });
         });
 }
