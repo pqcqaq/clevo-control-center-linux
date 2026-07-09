@@ -53,6 +53,16 @@ else
     printf '[warn] /proc/clevo_kbd_led not found; load module/clevo_kbd_led.ko first\n'
 fi
 
+if [[ -e /proc/clevo_dchu_status ]]; then
+    if [[ -r /proc/clevo_dchu_status ]]; then
+        printf '[ok] /proc/clevo_dchu_status is readable\n'
+    else
+        printf '[warn] /proc/clevo_dchu_status exists but is not readable by this user\n'
+    fi
+else
+    printf '[warn] /proc/clevo_dchu_status not found; rebuild and reload module/clevo_kbd_led.ko\n'
+fi
+
 if [[ "$missing" -ne 0 ]]; then
     exit 1
 fi

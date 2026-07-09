@@ -63,7 +63,7 @@
 - EC 字段位于 `\_SB.PC00.LPCB.EC` 的 EmbeddedControl 区域 offset `0xF8` 起：`FCMD/FDAT/FBUF/FBF1/FBF2/FBF3`。
 - 现成 `acpi_call-dkms` 输入端只支持 integer/string/buffer，不支持构造 package；而 `\_SB.DCHU._DSM` 需要 `Arg3 = Package(Buffer)`，所以不能可靠复现 Windows DLL 调用。
 - 已实现并在笔记本编译 `clevo_kbd_led.ko`。
-- 模块暴露 `/proc/clevo_kbd_led`，权限为 `root:root 0644`。
+- 模块暴露 `/proc/clevo_kbd_led`（键盘灯写入，`0666`）、`/proc/clevo_dchu_status`（只读状态，`0444`）和 `/proc/clevo_dchu`（调试读写，`0600`）。
 - 测试写入结果：
   - `f0 ff0000` 成功，dmesg 记录 `set zone=0xf0 rgb=ff0000`
   - `f0 ff0000`、`f1 00ff00`、`f2 0000ff` 均成功

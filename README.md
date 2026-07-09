@@ -4,7 +4,7 @@
 
 项目由两部分组成：
 
-- `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露 `/proc/clevo_kbd_led` 和 `/proc/clevo_dchu`
+- `module/`：最小 Linux 内核模块，负责调用 ACPI `_DSM`，并暴露键盘灯、只读硬件状态和 DCHU 调试 proc 节点
 - `src/`：Rust 程序，同一个二进制同时提供前台 GUI、后台服务和 DCHU 测试 CLI
 
 GUI 只负责修改配置和启动后台服务；动态灯效由后台服务持续执行，所以关闭 GUI 后灯效不会停止。后台服务通过固定 runtime 目录中的锁文件保持单例，多个 GUI 窗口共享同一个配置状态。
@@ -21,7 +21,9 @@ ACPI 路径：
 
 用户态通过 `/proc/clevo_kbd_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的 `[G, R, B, zone]` 数据。
 
-`/proc/clevo_dchu` 是测试接口，用于 CLI 读取 DCHU 状态或显式发送实验写命令。默认权限为 `0600`，需要 root。
+`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇转速等硬件状态。
+
+`/proc/clevo_dchu` 是调试接口，用于 CLI 读取 DCHU 原始数据或显式发送实验写命令。默认权限为 `0600`，需要 root。
 
 ## 目录结构
 
@@ -44,7 +46,14 @@ packaging/
   install.sh                  通用包安装脚本
   deb/                        Debian 包控制文件和安装钩子
 src/
-  main.rs                     GUI、配置读写、后台服务实现
+  main.rs                     程序入口、CLI 分发和 GUI 启动
+  dchu.rs                     DCHU proc 读写、CLI 输出和硬件状态解析
+  effects.rs                  动态灯效颜色计算
+  led.rs                      键盘灯 proc 写入
+  model.rs                    页面、灯效、颜色和分区领域模型
+  service.rs                  后台灯效服务、PID/lock 和硬件状态缓存
+  settings.rs                 配置路径、迁移、读写和硬件状态缓存文件
+  ui.rs                       egui 应用状态和页面渲染
 ```
 
 ## 环境要求
@@ -166,10 +175,12 @@ echo 'f2 0000ff' | sudo tee /proc/clevo_kbd_led
 读取实时状态和风扇表：
 
 ```bash
-sudo target/release/clevo-control-center dchu status
+target/release/clevo-control-center dchu status
 sudo target/release/clevo-control-center dchu fan-table
 sudo target/release/clevo-control-center dchu caps
 ```
+
+`dchu status` 优先读取 `/proc/clevo_dchu_status`，通常不需要 root。风扇表、能力位和原始读写仍使用 `/proc/clevo_dchu`，需要 root 权限。
 
 原始读取：
 
@@ -199,15 +210,15 @@ scripts/run-gui.sh
 
 GUI 页面：
 
-- 总览：灯效状态、后台服务、模块状态和常用入口
-- 灯光：键盘 RGB 色块、灯效模式、速度、亮度和分区选择
+- 总览：灯效摘要和两路风扇转速
+- 灯光：键盘 RGB 色块、灯效模式、速度和亮度
 - 性能：DCHU 电源模式和风扇模式按钮
 - 诊断：读取 DCHU 状态、风扇表和能力位
-- 设置：选择 `f0-f6` 生效分区
+- 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
 
 自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
 
-普通启动 GUI 时，程序会自动拉起后台服务。后台服务通过固定目录中的 `clevo-control-center.lock` 和 `clevo-control-center.pid` 保持单例，并持续读取 `settings.json` 执行动态灯效，因此关闭 GUI 后灯效仍会继续。
+普通启动 GUI 时，程序会自动拉起后台服务。后台服务通过固定目录中的 `clevo-control-center.lock` 和 `clevo-control-center.pid` 保持单例，并持续读取 `settings.json` 执行动态灯效，因此关闭 GUI 后灯效仍会继续。后台服务还会定期读取硬件状态并写入 runtime 缓存，GUI 打开后直接显示最近一次状态。
 
 可以同时打开多个 GUI 窗口。每个窗口都会把操作写入同一个 `settings.json`，并自动读取其他窗口保存的设置变化。
 

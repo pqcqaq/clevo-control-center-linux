@@ -17,6 +17,7 @@
 
 #define LED_PROC_NAME "clevo_kbd_led"
 #define DCHU_PROC_NAME "clevo_dchu"
+#define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
 #define DCHU_BUFFER_SIZE 0x100
@@ -28,6 +29,7 @@ static const guid_t dchu_guid =
 
 static struct proc_dir_entry *led_proc_entry;
 static struct proc_dir_entry *dchu_proc_entry;
+static struct proc_dir_entry *dchu_status_proc_entry;
 static acpi_handle dchu_handle;
 static bool verbose;
 
@@ -306,6 +308,23 @@ static const struct proc_ops clevo_dchu_proc_ops = {
 	.proc_write = clevo_dchu_write,
 };
 
+static ssize_t clevo_dchu_status_read(struct file *file, char __user *ubuf,
+				      size_t count, loff_t *ppos)
+{
+	struct dchu_result result = { 0 };
+	int ret;
+
+	ret = clevo_dchu_eval(0x0c, NULL, 0, &result);
+	if (ret)
+		return ret;
+
+	return simple_read_from_buffer(ubuf, count, ppos, result.text, result.len);
+}
+
+static const struct proc_ops clevo_dchu_status_proc_ops = {
+	.proc_read = clevo_dchu_status_read,
+};
+
 static int __init clevo_kbd_led_init(void)
 {
 	acpi_status status;
@@ -327,13 +346,22 @@ static int __init clevo_kbd_led_init(void)
 		return -ENOMEM;
 	}
 
-	pr_info("clevo_kbd_led: loaded, write RGB hex to /proc/%s; DCHU debug at /proc/%s\n",
-		LED_PROC_NAME, DCHU_PROC_NAME);
+	dchu_status_proc_entry = proc_create(DCHU_STATUS_PROC_NAME, 0444, NULL,
+					     &clevo_dchu_status_proc_ops);
+	if (!dchu_status_proc_entry) {
+		proc_remove(dchu_proc_entry);
+		proc_remove(led_proc_entry);
+		return -ENOMEM;
+	}
+
+	pr_info("clevo_kbd_led: loaded, write RGB hex to /proc/%s; DCHU status at /proc/%s; DCHU debug at /proc/%s\n",
+		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_PROC_NAME);
 	return 0;
 }
 
 static void __exit clevo_kbd_led_exit(void)
 {
+	proc_remove(dchu_status_proc_entry);
 	proc_remove(dchu_proc_entry);
 	proc_remove(led_proc_entry);
 	pr_info("clevo_kbd_led: unloaded\n");

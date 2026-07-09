@@ -6,7 +6,7 @@
 
 | 能力 | CLI | DCHU 路径 | 说明 |
 |------|-----|-----------|------|
-| 读取实时状态 | `sudo clevo-control-center dchu status` | `0x0C` | 返回风扇转速、部分电池/温度原始字段。当前样本约 `rpm1=588`、`rpm2=663`、`rpm3=0`。 |
+| 读取实时状态 | `clevo-control-center dchu status` | `/proc/clevo_dchu_status` / `0x0C` | 返回风扇转速、部分电池/温度原始字段；优先走只读状态节点，通常不需要 root。当前样本约 `rpm1=588`、`rpm2=663`、`rpm3=0`。 |
 | 读取风扇表 | `sudo clevo-control-center dchu fan-table` | `0x0D` | 返回键盘颜色、亮度原始值、`FANQ`、`KBTP`、Fan1/Fan2/Fan3 温度/占空比表。 |
 | 读取能力位 | `sudo clevo-control-center dchu caps` | `0x10/0x52/0x60/0x7A` | 当前返回 `0x93`、`0x04680025`、`0x021c`、`0x70020053`。 |
 | 原始读取 | `sudo clevo-control-center dchu raw-get 0x0d` | 任意 read function | 直接输出固件返回的 integer 或 buffer。 |
@@ -85,7 +85,7 @@ sudo clevo-control-center dchu fan-mode auto --i-understand
 
 ## 建议测试顺序
 
-1. 先跑 `status`、`fan-table`、`caps`，确认 `/proc/clevo_dchu` 可用。
+1. 先跑 `status`，确认 `/proc/clevo_dchu_status` 可用；再用 root 跑 `fan-table`、`caps`，确认 `/proc/clevo_dchu` 调试接口可用。
 2. 用 `kbd-brightness 0..9` 做低风险写入测试，肉眼确认亮度方向。
 3. 如要测试 `power-mode`，只在插电、负载较低、可观察风扇和温度时切换，并记录每个档位的 `status`。
 4. 如要测试 `fan-mode`，优先从 `auto` 或当前可接受的低风险档位开始，避免长时间停在 `silent/max/custom`。
