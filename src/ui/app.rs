@@ -345,17 +345,7 @@ impl eframe::App for ClevoLedApp {
             });
 
         self.persist_settings_if_due(false);
-        let repaint_after = if self.active_page == ControlPage::Overview
-            && self
-                .hardware
-                .as_ref()
-                .is_some_and(|snapshot| snapshot.fans.iter().any(|fan| fan.rpm > 0))
-        {
-            Duration::from_millis(80)
-        } else {
-            Duration::from_millis(500)
-        };
-        ctx.request_repaint_after(repaint_after);
+        ctx.request_repaint_after(Duration::from_millis(500));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

@@ -8,6 +8,9 @@ use super::widgets::{
 use crate::dchu::{FanStatus, HardwareSnapshot};
 use crate::model::{ControlPage, Mode, ALL_ZONES};
 
+const FAN_CARD_GAP: f32 = 12.0;
+const TWO_FAN_MIN_WIDTH: f32 = 560.0;
+
 pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     match app.active_page {
         ControlPage::Overview => overview_page(ui, app),
@@ -50,13 +53,22 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 
     ui.add_space(18.0);
     let fans = overview_fans(app.hardware.as_ref());
-    let width = fan_card_width(ui.available_width());
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-        for fan in &fans {
-            fan_card(ui, fan, width);
-        }
-    });
+    let available_width = ui.available_width();
+    let width = fan_card_width(available_width);
+    if available_width >= TWO_FAN_MIN_WIDTH {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(FAN_CARD_GAP, 0.0);
+            fan_card(ui, &fans[0], width);
+            fan_card(ui, &fans[1], width);
+        });
+    } else {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, FAN_CARD_GAP);
+            for fan in &fans {
+                fan_card(ui, fan, width);
+            }
+        });
+    }
 
     ui.add_space(14.0);
     if let Some(snapshot) = &app.hardware {
@@ -81,8 +93,8 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn fan_card_width(available_width: f32) -> f32 {
-    if available_width >= 560.0 {
-        ((available_width - 12.0) / 2.0).max(260.0)
+    if available_width >= TWO_FAN_MIN_WIDTH {
+        ((available_width - FAN_CARD_GAP) / 2.0).max(260.0)
     } else {
         available_width.max(260.0)
     }
