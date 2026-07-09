@@ -25,15 +25,15 @@ pub struct HardwareSnapshot {
 
 impl HardwareSnapshot {
     pub fn from_status_bytes(bytes: &[u8]) -> Self {
-        let fans = ["CPU 风扇", "GPU 风扇"]
+        let mut fans = ["CPU 风扇", "GPU 风扇"]
             .into_iter()
             .enumerate()
-            .map(|(index, label)| FanStatus {
-                label: label.to_owned(),
-                rpm: get_be_u16(bytes, 0x02 + index * 2),
-                temperature_celsius: fan_temperature(bytes, index),
-            })
-            .collect();
+            .map(|(index, label)| status_fan(bytes, index, label))
+            .collect::<Vec<_>>();
+        let pch_rpm = get_be_u16(bytes, 0x06);
+        if pch_rpm > 0 {
+            fans.push(status_fan(bytes, 2, "PCH 风扇"));
+        }
 
         Self {
             fans,
@@ -47,6 +47,14 @@ impl HardwareSnapshot {
             ],
             updated_unix_secs: unix_secs_now(),
         }
+    }
+}
+
+fn status_fan(bytes: &[u8], index: usize, label: &str) -> FanStatus {
+    FanStatus {
+        label: label.to_owned(),
+        rpm: get_be_u16(bytes, 0x02 + index * 2),
+        temperature_celsius: fan_temperature(bytes, index),
     }
 }
 
@@ -143,6 +151,14 @@ fn print_status(bytes: &[u8]) {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "--".to_owned())
     );
+    if get_be_u16(bytes, 0x06) > 0 {
+        println!(
+            "pch_temperature_celsius: {}",
+            fan_temperature(bytes, 2)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "--".to_owned())
+        );
+    }
     println!("battery_voltage_raw: {}", get_be_u16(bytes, 0x08));
     println!("battery_rate_raw: {}", get_be_u16(bytes, 0x0e));
     println!(
@@ -207,6 +223,7 @@ fn fan_temperature(bytes: &[u8], index: usize) -> Option<u8> {
     let value = match index {
         0 => bytes.get(0x11).copied().unwrap_or_default(),
         1 => bytes.get(0x12).copied().unwrap_or_default(),
+        2 => bytes.get(0x13).copied().unwrap_or_default(),
         _ => 0,
     };
 
@@ -274,8 +291,6 @@ mod tests {
         bytes[0x03] = 0xdc;
         bytes[0x04] = 0x06;
         bytes[0x05] = 0x40;
-        bytes[0x06] = 0x07;
-        bytes[0x07] = 0x08;
 
         let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
 
@@ -294,6 +309,23 @@ mod tests {
 
         assert_eq!(snapshot.fans[0].temperature_celsius, Some(43));
         assert_eq!(snapshot.fans[1].temperature_celsius, Some(47));
+    }
+
+    #[test]
+    fn hardware_snapshot_adds_pch_fan_only_when_rpm3_has_data() {
+        let mut bytes = vec![0; 0x20];
+        let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
+        assert_eq!(snapshot.fans.len(), 2);
+
+        bytes[0x06] = 0x07;
+        bytes[0x07] = 0x08;
+        bytes[0x13] = 51;
+        let snapshot = HardwareSnapshot::from_status_bytes(&bytes);
+
+        assert_eq!(snapshot.fans.len(), 3);
+        assert_eq!(snapshot.fans[2].label, "PCH 风扇");
+        assert_eq!(snapshot.fans[2].rpm, 1800);
+        assert_eq!(snapshot.fans[2].temperature_celsius, Some(51));
     }
 
     #[test]

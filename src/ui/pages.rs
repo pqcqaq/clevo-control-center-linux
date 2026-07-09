@@ -8,7 +8,7 @@ use crate::dchu::{FanStatus, HardwareSnapshot};
 use crate::model::{ControlPage, Mode, ALL_ZONES};
 
 const GAUGE_GAP: f32 = 18.0;
-const TWO_GAUGE_MIN_WIDTH: f32 = 560.0;
+const MIN_GAUGE_WIDTH: f32 = 260.0;
 
 pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     match app.active_page {
@@ -23,13 +23,20 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     let fans = overview_fans(app.hardware.as_ref());
     let available_width = ui.available_width();
-    let width = overview_gauge_width(available_width);
+    let columns = overview_gauge_columns(available_width, fans.len());
+    let width = overview_gauge_width(available_width, columns);
 
-    if available_width >= TWO_GAUGE_MIN_WIDTH {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = vec2(GAUGE_GAP, 0.0);
-            fan_gauge(ui, &fans[0], width);
-            fan_gauge(ui, &fans[1], width);
+    if columns > 1 {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, GAUGE_GAP);
+            for chunk in fans.chunks(columns) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(GAUGE_GAP, 0.0);
+                    for fan in chunk {
+                        fan_gauge(ui, fan, width);
+                    }
+                });
+            }
         });
     } else {
         ui.vertical(|ui| {
@@ -44,12 +51,21 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     overview_controls(ui, app);
 }
 
-fn overview_gauge_width(available_width: f32) -> f32 {
-    if available_width >= TWO_GAUGE_MIN_WIDTH {
-        ((available_width - GAUGE_GAP) / 2.0).max(260.0)
-    } else {
-        available_width.max(260.0)
+fn overview_gauge_columns(available_width: f32, fan_count: usize) -> usize {
+    let max_columns = fan_count.clamp(1, 3);
+    for columns in (1..=max_columns).rev() {
+        let required_width = MIN_GAUGE_WIDTH * columns as f32 + GAUGE_GAP * (columns - 1) as f32;
+        if available_width >= required_width {
+            return columns;
+        }
     }
+    1
+}
+
+fn overview_gauge_width(available_width: f32, columns: usize) -> f32 {
+    let columns = columns.max(1);
+    let gap_width = GAUGE_GAP * (columns - 1) as f32;
+    ((available_width - gap_width) / columns as f32).max(MIN_GAUGE_WIDTH)
 }
 
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -138,13 +154,22 @@ mod tests {
 
     #[test]
     fn overview_gauge_width_keeps_two_gauges_visible_when_space_allows() {
-        assert_eq!(overview_gauge_width(700.0), 341.0);
-        assert_eq!(overview_gauge_width(520.0), 520.0);
+        assert_eq!(overview_gauge_columns(700.0, 2), 2);
+        assert_eq!(overview_gauge_width(700.0, 2), 341.0);
+        assert_eq!(overview_gauge_columns(520.0, 2), 1);
+        assert_eq!(overview_gauge_width(520.0, 1), 520.0);
+    }
+
+    #[test]
+    fn overview_gauge_columns_supports_optional_pch_fan() {
+        assert_eq!(overview_gauge_columns(900.0, 3), 3);
+        assert_eq!(overview_gauge_columns(700.0, 3), 2);
+        assert_eq!(overview_gauge_columns(520.0, 3), 1);
     }
 }
 
-fn overview_fans(snapshot: Option<&HardwareSnapshot>) -> [FanStatus; 2] {
-    let mut fans = [
+fn overview_fans(snapshot: Option<&HardwareSnapshot>) -> Vec<FanStatus> {
+    let mut fans = vec![
         FanStatus {
             label: "CPU 风扇".to_owned(),
             rpm: 0,
@@ -157,10 +182,8 @@ fn overview_fans(snapshot: Option<&HardwareSnapshot>) -> [FanStatus; 2] {
         },
     ];
 
-    if let Some(snapshot) = snapshot {
-        for (target, source) in fans.iter_mut().zip(snapshot.fans.iter()) {
-            *target = source.clone();
-        }
+    if let Some(snapshot) = snapshot.filter(|snapshot| !snapshot.fans.is_empty()) {
+        fans = snapshot.fans.clone();
     }
 
     fans

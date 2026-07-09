@@ -20,7 +20,7 @@ ACPI 路径：
 
 用户态通过 `/proc/clevo_control_center_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的数据。
 
-`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇转速、CPU/GPU 温度等硬件状态。
+`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇转速、CPU/GPU 温度等硬件状态；RPM3 有数据时总览会额外显示 PCH 风扇。
 
 `/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它不接受任意 DCHU function 或裸数据。
 
@@ -201,7 +201,7 @@ scripts/run-gui.sh
 
 GUI 页面：
 
-- 总览：灯效摘要和两路风扇转速、CPU/GPU 温度
+- 总览：灯效摘要、CPU/GPU 风扇转速和温度；RPM3 有数据时额外显示 PCH 风扇
 - 灯光：键盘 RGB 色块、灯效模式、速度和亮度
 - 性能：DCHU 电源模式和风扇模式按钮
 - 诊断：读取 DCHU 只读状态

@@ -6,7 +6,7 @@
 
 | 能力 | CLI / proc | 校验规则 |
 |------|------------|----------|
-| 读取实时状态 | `clevo-control-center dchu status` / `/proc/clevo_dchu_status` | 只读；返回两路主要风扇转速、CPU/GPU 温度和部分硬件状态字段。 |
+| 读取实时状态 | `clevo-control-center dchu status` / `/proc/clevo_dchu_status` | 只读；返回 CPU/GPU 风扇转速、温度和部分硬件状态字段；RPM3 有数据时额外显示 PCH 风扇。 |
 | 键盘 RGB | GUI / `/proc/clevo_control_center_led` | 颜色必须是 6 位十六进制；显式分区只允许 `f0..f6`；不写分区时只写默认三分区。 |
 | 电源/性能档位 | `clevo-control-center dchu power-mode <0..3> --i-understand` / `/proc/clevo_dchu_control` | 只允许十进制 `0..3`。 |
 | 风扇模式 | `clevo-control-center dchu fan-mode <mode> --i-understand` / `/proc/clevo_dchu_control` | 只允许 `auto/max/silent/maxq/custom/turbo` 或数字 `0/1/3/5/6/7`。 |
@@ -17,7 +17,7 @@
 
 - `power-mode 0..3` 参考 opencontrol，对应 `Quiet/Powersaving/Performance/Entertainment`。
 - `fan-mode` 参考 opencontrol/opendchu，常见映射为 `0=auto`、`1=max`、`3=silent`、`5=maxq`、`6=custom`、`7=turbo`。
-- `status` 读取固件状态后解析当前 GUI 需要展示的两路主要风扇转速和 CPU/GPU 温度，第三路风扇在当前机器样本中为 `0`。
+- `status` 读取固件状态后解析当前 GUI 需要展示的 CPU/GPU 风扇转速和温度；第三路 RPM 非 0 时按 PCH 风扇显示。
 
 ## 建议测试顺序
 
