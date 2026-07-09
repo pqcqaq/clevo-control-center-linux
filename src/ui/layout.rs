@@ -3,8 +3,10 @@ use eframe::egui::{vec2, Button, Color32, Frame, RichText, ScrollArea, Ui};
 use super::{app::ClevoLedApp, pages};
 use crate::model::ControlPage;
 
-const SIDEBAR_WIDTH: f32 = 176.0;
+const SIDEBAR_CONTENT_WIDTH: f32 = 152.0;
+const SIDEBAR_HORIZONTAL_MARGIN: f32 = 12.0;
 const SHELL_GAP: f32 = 12.0;
+const NAV_BUTTON_HEIGHT: f32 = 36.0;
 
 pub(super) fn control_center(ui: &mut Ui, app: &mut ClevoLedApp) {
     let available = ui.available_size();
@@ -21,9 +23,9 @@ fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
     Frame::none()
         .fill(Color32::from_rgb(24, 23, 21))
         .rounding(14.0)
-        .inner_margin(egui::Margin::symmetric(12.0, 16.0))
+        .inner_margin(egui::Margin::symmetric(SIDEBAR_HORIZONTAL_MARGIN, 16.0))
         .show(ui, |ui| {
-            ui.set_width(SIDEBAR_WIDTH);
+            ui.set_width(SIDEBAR_CONTENT_WIDTH);
             ui.set_min_height(height.max(420.0));
             ui.vertical(|ui| {
                 ui.add_space(2.0);
@@ -62,7 +64,7 @@ fn nav_button(ui: &mut Ui, app: &mut ClevoLedApp, page: ControlPage) {
 
     if ui
         .add_sized(
-            vec2(SIDEBAR_WIDTH - 24.0, 36.0),
+            vec2(SIDEBAR_CONTENT_WIDTH, NAV_BUTTON_HEIGHT),
             Button::new(RichText::new(page.label()).size(14.0).color(text)).fill(fill),
         )
         .clicked()
@@ -86,4 +88,18 @@ fn content_panel(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
                     .show(ui, |ui| pages::show_active_page(ui, app));
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_buttons_fill_content_width() {
+        assert_eq!(SIDEBAR_CONTENT_WIDTH, 152.0);
+        assert_eq!(
+            SIDEBAR_HORIZONTAL_MARGIN * 2.0 + SIDEBAR_CONTENT_WIDTH,
+            176.0
+        );
+    }
 }
