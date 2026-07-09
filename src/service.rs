@@ -96,34 +96,36 @@ impl ServiceLock {
             fs::create_dir_all(parent)?;
         }
 
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(file) => {
-                let pid = std::process::id();
-                fs::write(&path, format!("{pid}\n"))?;
-                let _ = write_pid_file(&pid_path, pid);
-                Ok(Self { _file: file })
-            }
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                if active_service_pid().is_some() {
-                    Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "service already running",
-                    ))
-                } else {
+        for _ in 0..2 {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    let pid = std::process::id();
+                    fs::write(&path, format!("{pid}\n"))?;
+                    let _ = write_pid_file(&pid_path, pid);
+                    return Ok(Self { _file: file });
+                }
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    if active_service_pid().is_some() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "service already running",
+                        ));
+                    }
                     let _ = fs::remove_file(&path);
                     let _ = fs::remove_file(&pid_path);
-                    Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "stale service lock",
-                    ))
                 }
+                Err(err) => return Err(err),
             }
-            Err(err) => Err(err),
         }
+
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "stale service lock",
+        ))
     }
 }
 
