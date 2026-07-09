@@ -8,9 +8,10 @@ use super::widgets::{
 use crate::dchu::{FanStatus, HardwareSnapshot};
 use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
-const GAUGE_GAP: f32 = 12.0;
-const GAUGE_EDGE_GUARD: f32 = 10.0;
-const MIN_GAUGE_WIDTH: f32 = 260.0;
+const GAUGE_GAP: f32 = 8.0;
+const GAUGE_EDGE_GUARD: f32 = 8.0;
+const MIN_GAUGE_WIDTH: f32 = 224.0;
+const MAX_GAUGE_WIDTH: f32 = 236.0;
 
 pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     match app.active_page {
@@ -33,8 +34,11 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, GAUGE_GAP);
             for chunk in fans.chunks(columns) {
+                let row_width = overview_gauge_row_width(width, chunk.len());
+                let leading_space = overview_gauge_leading_space(available_width, row_width);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = vec2(GAUGE_GAP, 0.0);
+                    ui.add_space(leading_space);
                     for fan in chunk {
                         fan_gauge(ui, fan, width);
                     }
@@ -45,7 +49,12 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, GAUGE_GAP);
             for fan in &fans {
-                fan_gauge(ui, fan, width);
+                let row_width = overview_gauge_row_width(width, 1);
+                let leading_space = overview_gauge_leading_space(available_width, row_width);
+                ui.horizontal(|ui| {
+                    ui.add_space(leading_space);
+                    fan_gauge(ui, fan, width);
+                });
             }
         });
     }
@@ -72,7 +81,17 @@ fn overview_gauge_width(available_width: f32, columns: usize) -> f32 {
     let gap_width = GAUGE_GAP * (columns - 1) as f32;
     ((usable_width - gap_width) / columns as f32)
         .floor()
+        .min(MAX_GAUGE_WIDTH)
         .max(MIN_GAUGE_WIDTH)
+}
+
+fn overview_gauge_row_width(gauge_width: f32, columns: usize) -> f32 {
+    let columns = columns.max(1);
+    gauge_width * columns as f32 + GAUGE_GAP * (columns - 1) as f32
+}
+
+fn overview_gauge_leading_space(available_width: f32, row_width: f32) -> f32 {
+    ((available_width - row_width) * 0.5).max(0.0)
 }
 
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -195,24 +214,40 @@ mod tests {
     #[test]
     fn overview_gauge_width_keeps_two_gauges_visible_when_space_allows() {
         assert_eq!(overview_gauge_columns(700.0, 2), 2);
-        assert_eq!(overview_gauge_width(700.0, 2), 339.0);
-        assert_eq!(overview_gauge_columns(520.0, 2), 1);
-        assert_eq!(overview_gauge_width(520.0, 1), 510.0);
+        assert_eq!(overview_gauge_width(700.0, 2), 236.0);
+        assert_eq!(overview_gauge_columns(520.0, 2), 2);
+        assert_eq!(overview_gauge_width(520.0, 2), 236.0);
     }
 
     #[test]
     fn overview_gauge_columns_supports_optional_pch_fan() {
         assert_eq!(overview_gauge_columns(900.0, 3), 3);
-        assert_eq!(overview_gauge_columns(700.0, 3), 2);
-        assert_eq!(overview_gauge_columns(520.0, 3), 1);
+        assert_eq!(overview_gauge_columns(700.0, 3), 3);
+        assert_eq!(overview_gauge_columns(520.0, 3), 2);
     }
 
     #[test]
     fn overview_gauge_row_leaves_right_edge_guard() {
         let columns = overview_gauge_columns(700.0, 2);
         let width = overview_gauge_width(700.0, columns);
-        let occupied = width * columns as f32 + GAUGE_GAP * (columns - 1) as f32;
+        let occupied = overview_gauge_row_width(width, columns);
         assert!(occupied <= 700.0 - GAUGE_EDGE_GUARD);
+    }
+
+    #[test]
+    fn overview_gauge_three_fan_row_leaves_right_edge_guard() {
+        let columns = overview_gauge_columns(700.0, 3);
+        let width = overview_gauge_width(700.0, columns);
+        let occupied = overview_gauge_row_width(width, columns);
+        assert!(occupied <= 700.0 - GAUGE_EDGE_GUARD);
+    }
+
+    #[test]
+    fn overview_gauge_row_is_centered_when_space_allows() {
+        let width = overview_gauge_width(700.0, 2);
+        let row_width = overview_gauge_row_width(width, 2);
+        assert_eq!(row_width, 480.0);
+        assert_eq!(overview_gauge_leading_space(700.0, row_width), 110.0);
     }
 }
 

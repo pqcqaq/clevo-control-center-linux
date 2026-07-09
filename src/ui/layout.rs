@@ -7,6 +7,7 @@ const SIDEBAR_CONTENT_WIDTH: f32 = 152.0;
 const SIDEBAR_HORIZONTAL_MARGIN: f32 = 12.0;
 const SHELL_GAP: f32 = 12.0;
 const NAV_BUTTON_HEIGHT: f32 = 36.0;
+const CONTENT_PANEL_MARGIN: f32 = 18.0;
 
 pub(super) fn control_center(ui: &mut Ui, app: &mut ClevoLedApp) {
     let available = ui.available_size();
@@ -74,11 +75,11 @@ fn nav_button(ui: &mut Ui, app: &mut ClevoLedApp, page: ControlPage) {
 }
 
 fn content_panel(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
-    let width = ui.available_width().max(1.0);
+    let width = content_panel_inner_width(ui.available_width());
     Frame::none()
         .fill(Color32::from_rgb(29, 28, 25))
         .rounding(14.0)
-        .inner_margin(egui::Margin::same(18.0))
+        .inner_margin(egui::Margin::same(CONTENT_PANEL_MARGIN))
         .show(ui, |ui| {
             ui.set_width(width);
             ui.set_min_height(height.max(420.0));
@@ -88,6 +89,10 @@ fn content_panel(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
                     .show(ui, |ui| pages::show_active_page(ui, app));
             });
         });
+}
+
+fn content_panel_inner_width(available_width: f32) -> f32 {
+    (available_width - CONTENT_PANEL_MARGIN * 2.0).max(1.0)
 }
 
 #[cfg(test)]
@@ -101,5 +106,11 @@ mod tests {
             SIDEBAR_HORIZONTAL_MARGIN * 2.0 + SIDEBAR_CONTENT_WIDTH,
             176.0
         );
+    }
+
+    #[test]
+    fn content_panel_inner_width_accounts_for_frame_margin() {
+        assert_eq!(content_panel_inner_width(772.0), 736.0);
+        assert_eq!(content_panel_inner_width(12.0), 1.0);
     }
 }
