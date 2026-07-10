@@ -1,6 +1,6 @@
 use eframe::egui::{
-    self, pos2, vec2, Align2, Button, Color32, DragValue, FontId, Frame, Pos2, Rect, RichText,
-    Sense, Shape, Stroke, Ui,
+    self, pos2, vec2, Align2, Button, Color32, DragValue, FontId, Pos2, Rect, RichText, Sense,
+    Shape, Stroke, Ui,
 };
 
 use super::app::ClevoLedApp;
@@ -13,30 +13,17 @@ use crate::fan_curve::{
 const CURVE_PANEL_HEIGHT: f32 = 236.0;
 
 pub(super) fn fan_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "风扇", "本地自定义曲线配置；当前版本不写入 EC 风扇表");
+    page_header(ui, "风扇", "自定义风扇控制曲线");
 
-    Frame::none()
-        .fill(Color32::from_rgb(35, 34, 30))
-        .rounding(12.0)
-        .inner_margin(egui::Margin::same(14.0))
-        .show(ui, |ui| {
-            fan_curve_switch(ui, app);
-            if app.fan_curve_draft.enabled {
-                ui.add_space(14.0);
-                fan_curve_tabs(ui, app);
-                ui.add_space(12.0);
-                fan_curve_editor(ui, app);
-                ui.add_space(14.0);
-                fan_curve_actions(ui, app);
-            } else {
-                ui.add_space(14.0);
-                ui.label(
-                    RichText::new("自定义风扇曲线未开启；首页不会显示曲线 1/2/3。")
-                        .size(13.0)
-                        .color(Color32::from_rgb(151, 145, 135)),
-                );
-            }
-        });
+    fan_curve_switch(ui, app);
+    if app.fan_curve_draft.enabled {
+        ui.add_space(16.0);
+        fan_curve_tabs(ui, app);
+        ui.add_space(14.0);
+        fan_curve_editor(ui, app);
+        ui.add_space(16.0);
+        fan_curve_actions(ui, app);
+    }
 }
 
 fn fan_curve_switch(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -50,11 +37,6 @@ fn fan_curve_switch(ui: &mut Ui, app: &mut ClevoLedApp) {
                 .size(15.0)
                 .strong()
                 .color(Color32::from_rgb(236, 230, 218)),
-        );
-        ui.label(
-            RichText::new("仅保存到本地配置；首页选择曲线后会记录 CPU/GPU 曲线意图，不直接写 EC。")
-                .size(12.0)
-                .color(Color32::from_rgb(151, 145, 135)),
         );
     });
 }
@@ -95,12 +77,20 @@ fn fan_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp) {
         return;
     }
 
-    let width = ((ui.available_width() - 12.0) * 0.5).max(260.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-        curve_card(ui, app, FanCurveChannel::Cpu, width);
-        curve_card(ui, app, FanCurveChannel::Gpu, width);
-    });
+    let available_width = ui.available_width();
+    let column_gap = 14.0;
+    if available_width >= 520.0 {
+        let width = ((available_width - column_gap) * 0.5).floor();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(column_gap, 0.0);
+            curve_panel(ui, app, FanCurveChannel::Cpu, width);
+            curve_panel(ui, app, FanCurveChannel::Gpu, width);
+        });
+    } else {
+        curve_panel(ui, app, FanCurveChannel::Cpu, available_width);
+        ui.add_space(14.0);
+        curve_panel(ui, app, FanCurveChannel::Gpu, available_width);
+    }
 
     if let Some(selection) = app.fan_curve_selection {
         if selection.profile == app.fan_curve_tab {
@@ -110,25 +100,20 @@ fn fan_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp) {
     }
 }
 
-fn curve_card(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, width: f32) {
-    Frame::none()
-        .fill(Color32::from_rgb(26, 25, 22))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(57, 51, 42)))
-        .rounding(10.0)
-        .inner_margin(egui::Margin::same(12.0))
-        .show(ui, |ui| {
-            ui.set_width(width);
-            ui.label(
-                RichText::new(channel.label())
-                    .size(14.0)
-                    .strong()
-                    .color(Color32::from_rgb(232, 224, 210)),
-            );
-            ui.add_space(8.0);
-            let (rect, _) =
-                ui.allocate_exact_size(vec2(width - 24.0, CURVE_PANEL_HEIGHT), Sense::hover());
-            draw_curve_editor(ui, app, channel, rect);
-        });
+fn curve_panel(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, width: f32) {
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        ui.label(
+            RichText::new(channel.label())
+                .size(14.0)
+                .strong()
+                .color(Color32::from_rgb(232, 224, 210)),
+        );
+        ui.add_space(8.0);
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(width.max(180.0), CURVE_PANEL_HEIGHT), Sense::hover());
+        draw_curve_editor(ui, app, channel, rect);
+    });
 }
 
 fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, rect: Rect) {
@@ -247,53 +232,42 @@ fn selected_point_editor(ui: &mut Ui, app: &mut ClevoLedApp, selection: FanCurve
 
     let mut temp = point.temp_celsius;
     let mut duty = point.duty_percent;
-    Frame::none()
-        .fill(Color32::from_rgb(26, 25, 22))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(57, 51, 42)))
-        .rounding(10.0)
-        .inner_margin(egui::Margin::same(12.0))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{} 点 {}",
-                        selection.channel.label(),
-                        selection.point + 1
-                    ))
-                    .size(13.0)
-                    .strong()
-                    .color(Color32::from_rgb(222, 214, 199)),
-                );
-                ui.label("温度");
-                let temp_changed = ui
-                    .add(DragValue::new(&mut temp).range(FAN_CURVE_MIN_TEMP..=FAN_CURVE_MAX_TEMP))
-                    .changed();
-                ui.label("°C");
-                ui.label("占空比");
-                let duty_changed = ui
-                    .add(DragValue::new(&mut duty).range(FAN_CURVE_MIN_DUTY..=FAN_CURVE_MAX_DUTY))
-                    .changed();
-                ui.label("%");
-                if temp_changed || duty_changed {
-                    channel_curve_mut(app, selection.channel).set_point(
-                        selection.point,
-                        temp,
-                        duty,
-                    );
-                }
-            });
-        });
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
+        ui.label(
+            RichText::new(format!(
+                "{} 点 {}",
+                selection.channel.label(),
+                selection.point + 1
+            ))
+            .size(13.0)
+            .strong()
+            .color(Color32::from_rgb(222, 214, 199)),
+        );
+        ui.label("温度");
+        let temp_changed = ui
+            .add(DragValue::new(&mut temp).range(FAN_CURVE_MIN_TEMP..=FAN_CURVE_MAX_TEMP))
+            .changed();
+        ui.label("°C");
+        ui.label("占空比");
+        let duty_changed = ui
+            .add(DragValue::new(&mut duty).range(FAN_CURVE_MIN_DUTY..=FAN_CURVE_MAX_DUTY))
+            .changed();
+        ui.label("%");
+        if temp_changed || duty_changed {
+            channel_curve_mut(app, selection.channel).set_point(selection.point, temp, duty);
+        }
+    });
 }
 
 fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
-    ui.horizontal_wrapped(|ui| {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
         if ui
-            .add_sized(vec2(100.0, 34.0), Button::new("保存"))
+            .add_sized(vec2(100.0, 34.0), Button::new("恢复"))
             .clicked()
         {
-            app.save_fan_curve_draft();
+            app.restore_fan_curve_draft();
         }
         if ui
             .add_sized(vec2(100.0, 34.0), Button::new("重置"))
@@ -302,10 +276,10 @@ fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
             app.reset_current_fan_curve_profile();
         }
         if ui
-            .add_sized(vec2(100.0, 34.0), Button::new("恢复"))
+            .add_sized(vec2(100.0, 34.0), Button::new("保存"))
             .clicked()
         {
-            app.restore_fan_curve_draft();
+            app.save_fan_curve_draft();
         }
     });
 }
