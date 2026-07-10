@@ -1,4 +1,7 @@
-use eframe::egui::{vec2, Button, Color32, Frame, RichText, ScrollArea, Ui};
+use eframe::egui::{
+    pos2, vec2, Align2, Color32, FontId, Frame, Pos2, Rect, RichText, ScrollArea, Sense, Shape,
+    Stroke, Ui,
+};
 
 use super::{app::ClevoLedApp, pages};
 use crate::model::ControlPage;
@@ -7,6 +10,7 @@ const SIDEBAR_CONTENT_WIDTH: f32 = 152.0;
 const SIDEBAR_HORIZONTAL_MARGIN: f32 = 12.0;
 const SHELL_GAP: f32 = 12.0;
 const NAV_BUTTON_HEIGHT: f32 = 36.0;
+const NAV_BUTTON_SKEW: f32 = 12.0;
 const CONTENT_PANEL_MARGIN: f32 = 18.0;
 
 pub(super) fn control_center(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -51,27 +55,138 @@ fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
 }
 
 fn nav_button(ui: &mut Ui, app: &mut ClevoLedApp, page: ControlPage) {
-    let selected = app.active_page == page;
-    let fill = if selected {
-        Color32::from_rgb(64, 47, 25)
-    } else {
-        Color32::from_rgb(32, 31, 28)
-    };
-    let text = if selected {
-        Color32::from_rgb(252, 235, 207)
-    } else {
-        Color32::from_rgb(187, 180, 168)
-    };
+    let id = ui.make_persistent_id(("nav_button", page.label()));
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(SIDEBAR_CONTENT_WIDTH, NAV_BUTTON_HEIGHT),
+        Sense::hover(),
+    );
+    let response = ui.interact(rect, id, Sense::click());
 
-    if ui
-        .add_sized(
-            vec2(SIDEBAR_CONTENT_WIDTH, NAV_BUTTON_HEIGHT),
-            Button::new(RichText::new(page.label()).size(14.0).color(text)).fill(fill),
-        )
-        .clicked()
-    {
+    if response.clicked() {
         app.active_page = page;
     }
+
+    draw_nav_button(ui, rect, &response, app.active_page == page, page.label());
+}
+
+fn draw_nav_button(
+    ui: &mut Ui,
+    rect: Rect,
+    response: &egui::Response,
+    selected: bool,
+    label: &str,
+) {
+    let hover_t =
+        ui.ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.14);
+    let selected_t = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with("selected"), selected, 0.18);
+    let press_t = ui.ctx().animate_bool_with_time(
+        response.id.with("press"),
+        response.is_pointer_button_down_on(),
+        0.07,
+    );
+
+    let rect = rect
+        .translate(vec2(hover_t * 2.5 - press_t * 1.5, press_t * 1.0))
+        .shrink2(vec2(0.0, 1.0));
+    let painter = ui.painter_at(rect.expand(7.0));
+    let lift = hover_t.max(selected_t);
+    let fill = blend_color(
+        blend_color(
+            Color32::from_rgb(30, 29, 26),
+            Color32::from_rgb(58, 43, 24),
+            selected_t,
+        ),
+        Color32::from_rgb(46, 42, 35),
+        hover_t * 0.55,
+    );
+    let stroke = blend_color(
+        Color32::from_rgb(57, 52, 43),
+        Color32::from_rgb(221, 164, 91),
+        lift,
+    );
+    let text = blend_color(
+        Color32::from_rgb(176, 170, 158),
+        Color32::from_rgb(255, 236, 201),
+        (selected_t + hover_t * 0.55).clamp(0.0, 1.0),
+    );
+    let points = nav_button_points(rect, NAV_BUTTON_SKEW);
+    painter.add(Shape::convex_polygon(
+        points.to_vec(),
+        fill,
+        Stroke::new(1.0 + selected_t, stroke),
+    ));
+
+    if lift > 0.0 {
+        let glow = Color32::from_rgba_unmultiplied(231, 166, 84, (44.0 * lift) as u8);
+        painter.add(Shape::convex_polygon(
+            nav_button_points(rect.expand(3.0), NAV_BUTTON_SKEW + 1.5).to_vec(),
+            glow,
+            Stroke::new(0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 0)),
+        ));
+    }
+
+    let rail_width = 4.0 + selected_t * 8.0;
+    let rail_rect = Rect::from_min_max(
+        pos2(rect.left(), rect.top() + 5.0),
+        pos2(rect.left() + rail_width, rect.bottom() - 5.0),
+    );
+    painter.add(Shape::convex_polygon(
+        nav_button_points(rail_rect, 3.0).to_vec(),
+        Color32::from_rgba_unmultiplied(231, 166, 84, (58.0 + 130.0 * selected_t) as u8),
+        Stroke::new(0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 0)),
+    ));
+
+    let top_y = rect.top() + 5.0;
+    painter.line_segment(
+        [
+            pos2(rect.left() + NAV_BUTTON_SKEW + 8.0, top_y),
+            pos2(rect.right() - 22.0, top_y),
+        ],
+        Stroke::new(
+            1.0,
+            Color32::from_rgba_unmultiplied(255, 226, 174, (22.0 + 48.0 * lift) as u8),
+        ),
+    );
+
+    if hover_t > 0.0 {
+        let scan_x = rect.left() + 18.0 + (rect.width() - 42.0) * hover_t;
+        painter.line_segment(
+            [
+                pos2(scan_x - 7.0, rect.top() + 7.0),
+                pos2(scan_x + 2.0, rect.bottom() - 7.0),
+            ],
+            Stroke::new(
+                1.2,
+                Color32::from_rgba_unmultiplied(255, 231, 185, (94.0 * hover_t) as u8),
+            ),
+        );
+    }
+
+    let notch_alpha = (70.0 + 150.0 * selected_t + 45.0 * hover_t).clamp(0.0, 255.0) as u8;
+    painter.line_segment(
+        [
+            pos2(rect.right() - NAV_BUTTON_SKEW - 14.0, rect.bottom() - 5.0),
+            pos2(rect.right() - 4.0, rect.bottom() - 5.0),
+        ],
+        Stroke::new(
+            1.5,
+            Color32::from_rgba_unmultiplied(231, 166, 84, notch_alpha),
+        ),
+    );
+
+    painter.text(
+        pos2(
+            rect.left() + NAV_BUTTON_SKEW + 18.0 + hover_t * 2.0,
+            rect.center().y,
+        ),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(14.0 + selected_t * 0.5),
+        text,
+    );
 }
 
 fn content_panel(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
@@ -95,6 +210,26 @@ fn content_panel_inner_width(available_width: f32) -> f32 {
     (available_width - CONTENT_PANEL_MARGIN * 2.0).max(1.0)
 }
 
+fn nav_button_points(rect: Rect, skew: f32) -> [Pos2; 4] {
+    [
+        pos2(rect.left() + skew, rect.top()),
+        pos2(rect.right(), rect.top()),
+        pos2(rect.right() - skew, rect.bottom()),
+        pos2(rect.left(), rect.bottom()),
+    ]
+}
+
+fn blend_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let blend = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(
+        blend(from.r(), to.r()),
+        blend(from.g(), to.g()),
+        blend(from.b(), to.b()),
+        blend(from.a(), to.a()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +241,27 @@ mod tests {
             SIDEBAR_HORIZONTAL_MARGIN * 2.0 + SIDEBAR_CONTENT_WIDTH,
             176.0
         );
+    }
+
+    #[test]
+    fn nav_button_shape_uses_parallelogram_skew() {
+        let rect = Rect::from_min_max(pos2(10.0, 20.0), pos2(110.0, 56.0));
+        let points = nav_button_points(rect, 12.0);
+
+        assert_eq!(points[0], pos2(22.0, 20.0));
+        assert_eq!(points[1], pos2(110.0, 20.0));
+        assert_eq!(points[2], pos2(98.0, 56.0));
+        assert_eq!(points[3], pos2(10.0, 56.0));
+    }
+
+    #[test]
+    fn blend_color_clamps_interpolation() {
+        let from = Color32::from_rgb(10, 20, 30);
+        let to = Color32::from_rgb(110, 120, 130);
+
+        assert_eq!(blend_color(from, to, -1.0), from);
+        assert_eq!(blend_color(from, to, 2.0), to);
+        assert_eq!(blend_color(from, to, 0.5), Color32::from_rgb(60, 70, 80));
     }
 
     #[test]
