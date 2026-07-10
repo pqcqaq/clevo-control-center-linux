@@ -8,7 +8,7 @@
 |------|------------|----------|
 | 读取实时状态 | `clevo-control-center dchu status` / `/proc/clevo_dchu_status` | 只读；返回 CPU/GPU 风扇 tach 计数、温度块和硬件状态 raw buffer；tach 换算后显示为 RPM，第三路 tach 有数据时额外显示 PCH 风扇。 |
 | 读取配置/能力 | `/proc/clevo_dchu_config` | 只读；返回 DCHU 0x0D 配置 buffer、`FANQ`/`KBTP`、`PSF1/PSF2/PSF4/PSF5` 能力整数和受限 AppSettings 模式读回。 |
-| 读取 AppSettings 模式状态 | `clevo-control-center dchu app-settings` / `/proc/clevo_dchu_app_settings` | 只读；只返回 `page=1 offset=1` 电源模式和 `page=4 offset=5` 风扇模式，不提供任意 AppSettings 读写。 |
+| 读取 AppSettings 模式状态 | `clevo-control-center dchu app-settings` / `/proc/clevo_dchu_app_settings` | 只读；只返回 `page=1 offset=1` 电源模式和 `page=4 offset=5` 风扇模式。这是运行时受限兼容镜像，不是完整原厂 AppSettings 持久区，不提供任意 AppSettings 读写。 |
 | 键盘 RGB | GUI / `/proc/clevo_control_center_led` | 颜色必须是 6 位十六进制；显式分区只允许 `f0..f6`；不写分区时只写默认三分区。 |
 | 电源/性能档位 | `clevo-control-center dchu power-mode <0..3> --i-understand` / `/proc/clevo_dchu_control` | 只允许十进制 `0..3`。 |
 | 风扇模式 | `clevo-control-center dchu fan-mode <mode> --i-understand` / `/proc/clevo_dchu_control` | 只允许 `auto/max/silent/maxq/custom` 或数字 `0/1/3/5/6`。 |
@@ -19,7 +19,7 @@
 
 - `power-mode 0..3` 参考 opencontrol，对应 `Quiet/Powersaving/Performance/Entertainment`。
 - `fan-mode` 以原厂 Control Center 3.0 静态分析为准：`sub=1` 时公开 `0=auto`、`1=max`、`3=silent`、`5=maxq`、`6=custom`。旧实现把 silent 写成 `2`，这是错误值。
-- 原厂 UI 选中态不来自 `0x0D[0x0E]`，而是 `ReadAppSettings(1,1,1)` 读电源模式、`ReadAppSettings(4,5,1)` 读风扇模式；Linux 模块只实现这两个字段的受限兼容层，不开放完整 0x1000 AppSettings 空间。
+- 原厂 UI 选中态不来自 `0x0D[0x0E]`，而是 `ReadAppSettings(1,1,1)` 读电源模式、`ReadAppSettings(4,5,1)` 读风扇模式；Linux 模块只实现这两个字段的运行时受限兼容层，不开放完整 0x1000 AppSettings 空间，也不声称已复刻 Windows AcpiBridge 的持久 AppSettings 存储。
 - `status` 读取固件状态后解析当前 GUI 需要展示的 CPU/GPU 风扇转速和温度；风扇 raw tach 使用 `2156220 / raw_tach` 换算为 RPM，第三路 tach 非 0 时按 PCH 风扇显示；温度块按 `0x10..0x15` 展示，已确认的 CPU/GPU 字段直接显示为单字节摄氏度值，未知字段按 offset 展示。
 - 左侧“高级”页面只读展示风扇 raw/解析值、温度块、AppSettings 模式字段、其他非零字段和完整 DCHU raw buffer；不增加新的写入入口。
 
@@ -33,5 +33,5 @@
 ## 不再公开的内容
 
 - 不再提供任意 DCHU function 读取或写入入口。
-- 不再提供风扇曲线、键盘亮度、能力位读取等未收敛为稳定 UI 控件的命令。
+- 不再提供风扇曲线、MUX/独显直连、GPU/CPU 超频、Battery Saver、EnergySave、AntiDust、键盘亮度、能力位读取等未收敛为稳定 UI 控件的写入命令；这些高级能力的原厂静态分析只记录在 `findings.md`，不进入当前公开接口。
 - 不再创建 `/proc/clevo_dchu` 调试节点。

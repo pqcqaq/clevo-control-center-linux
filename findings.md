@@ -154,3 +154,287 @@
   - `WriteAppSettings(page, offset, length, data)` 发送 `{op=1, offset=page * 0x100 + offset, length, data...}` 到同一个 IOCTL。
 - Linux 模块不开放完整 AppSettings 空间，只实现原厂当前模式读回所需的白名单字段：`page=1 offset=1` 电源模式、`page=4 offset=5` 风扇模式。写 `fan-mode` 成功后按原厂顺序同步 `SetAPPData(4,5,1)`；写 `power-mode` 时先同步 `WriteAppSettings(1,1,1)` 再写 `SCMD(0x79, sub=0x19)`，硬件写失败会回滚该字段，避免 GUI 显示未生效状态。
 - 因此 Linux GUI 不应把 `0x0D[0x0E]` 当作电源/风扇选中态；按钮高亮只来自受限 AppSettings 兼容层。
+
+## 原厂反编译证据链完整记录
+
+### 静态分析范围与工具
+- 原厂安装包来源：`D:\07_ControlCenter`。
+- 已解包静态工作目录：`C:\Users\pqcmm\oem_cc_static`。
+- 已分析 AppX：
+  - `ControlCenter\AppxManifest.xml`：`CLEVOCO.ControlCenter3.0`，版本 `3.94.0.0`，full-trust 入口 `ControlCenter30\ControlCenter30.exe`，协议 `clevocc30:`。
+  - `FanSpeed\AppxManifest.xml`：`CLEVOCO.504814C03D814`，版本 `3.93.0.0`，full-trust 入口 `FanSpeedSetting\FanSpeedSetting.exe`，协议 `clevofan:`。
+- 已分析二进制：
+  - `ControlCenter\ControlCenter30\ControlCenter30.exe`
+  - `ControlCenter\ControlCenter30\InsydeDCHU.dll`
+  - `FanSpeed\FanSpeedSetting\FanSpeedSetting.exe`
+  - `FanSpeed\FanSpeedSetting\InsydeDCHU.dll`
+- 已继续解包/反编译的高级组件：
+  - `FnKey`：托盘菜单、能力位解析、GPU MUX、Battery Saver、风扇/电源落地逻辑。
+  - `DCHUService` / `LaunchFnkey`：服务启动、CPU OC AppSettings 读写、AMD Ryzen Master SDK 安装入口。
+  - `ControlGPU` / `GPUOverclocking`：NVIDIA GPU 信息、限频、GC6、核心/显存 OC、风扇曲线 UI。
+  - `CPUOC2` / `CC30_BG` / `CPUOC_Loading`：Intel XTU 写入、CPU OC AppSettings page 6 字段。
+  - `BatteryPackUtility` / `EnergySave`：电池刷新、节能计划、充放电阈值、Battery Saver。
+- 使用工具：`ilspycmd 8.2.0.7535`、`objdump`、`strings`、`7z`。全程只做静态解包、反编译、反汇编和字符串查看，未运行安装程序、未运行原厂 exe、未查看图片资源。
+- `data1.cab`/`data2.cab` 是 InstallShield 数据包，`7z` 不能作为标准 CAB 直接列出。未继续通过运行安装器来展开，避免执行原厂程序。
+
+### C# 到 InsydeDCHU.dll 的公共封装
+- `ControlCenter30.DCHU` 和 `FanSpeedSetting.InsydeDriver` 都通过 P/Invoke 调用 `InsydeDCHU.dll`。
+- DLL 导出函数确认如下：
+  - `GetDCHU_Data_Integer`
+  - `GetDCHU_Data_Buffer`
+  - `ReadAppSettings`
+  - `SetDCHU_Data`
+  - `SetDCHU_DataEx`
+  - `WriteAppSettings`
+- `SetWMI(command, data)` 把 `data` 作为 little-endian 4 字节传给 `SetDCHU_Data(command, bytes, 4)`。
+- `SetWMI(command, sub, data)` 先把 `data` 转成 little-endian，再把第 4 字节覆盖为 `sub`，所以 Linux 对应 payload 是 `(sub << 24) | data`。
+- `SetWMIPackage(command, buffer)` 传 256 字节 buffer。
+- `SetWMIPackageEx(command, buffer, out)` 传 256 字节并取回 ACPI 返回 buffer。
+- `GetWMIPackage(command)` 调用 `GetDCHU_Data_Buffer(command, ref array[0])` 并返回 256 字节数组。
+- `GetAPPData(page, index, length)` 是 `ReadAppSettings(page, index, length)` 的 C# 包装。
+- `SetAPPData(page, index, length, data)` 是 `WriteAppSettings(page, index, length)` 的 C# 包装。
+
+### Native DLL 路径与 IOCTL
+- `InsydeDCHU.dll` 是 PE32+ x64 DLL，字符串中包含 PDB 路径 `D:\LOCAL_SOURCE_CODE\InsydeDCHU_dll\x64\Release\InsydeDCHU.pdb`。
+- DLL 导入 `CM_Get_Device_Interface_List_SizeW`、`CM_Get_Device_Interface_ListW`、`CreateFileW`、`DeviceIoControl`，说明它枚举设备接口后打开设备并发 IOCTL。
+- 设备接口 GUID 在 DLL 数据段中出现为 `{86994c74-ad43-4812-b7e7-0c420b5c5fd7}`。
+- ACPI `_DSM` GUID 在 DLL 数据段中出现为 `{93f224e4-fbdc-4bbf-add6-db71bdc0afad}`，并能看到 `_DSM` 字符串。
+- DCHU `_DSM` 调用使用 IOCTL `0x322400`。反汇编中多处 `DeviceIoControl` 前设置：
+  - control code `0x322400`
+  - 输入大小约 `0x40c`
+  - 输出大小约 `0x420`
+- AppSettings 读写使用另一条 IOCTL `0x32240c`，不是 `_DSM` 的 `0x322400`，也不是 Linux 当前直接读取到的 `0x0C/0x0D` EC buffer。
+- `ReadAppSettings(page, offset, length)` 的 native 行为：
+  - 读取 0x1000 字节 AppSettings 区。
+  - 计算线性偏移 `page * 0x100 + offset`。
+  - 从该偏移复制 `length` 字节给调用方。
+- `WriteAppSettings(page, offset, length, data)` 的 native 行为：
+  - 构造写包，包含 `op=1`、线性偏移 `page * 0x100 + offset`、`length` 和数据。
+  - 通过 `0x32240c` 发给 Windows AcpiBridge 侧驱动。
+- 结论：AppSettings 是原厂 Windows 驱动维护的独立设置区；Linux 当前只能实现受限兼容镜像，不能声称已完整读写 Windows AppSettings 存储。
+
+### 风扇实时数据和换算
+- `FanSpeedSetting.FAN.Read_FanSpeed()` 读取 `GetWMIPackage(12)`，即 DCHU command `0x0C`。
+- 原厂字段读取：
+  - CPU fan raw tach：`array[3] + (array[2] << 8)`
+  - GPU1 fan raw tach：`array[5] + (array[4] << 8)`
+  - GPU2 fan raw tach：`array[7] + (array[6] << 8)`
+  - CPU fan duty raw：`array[16]`
+  - GPU1 fan duty raw：`array[19]`
+  - GPU2 fan duty raw：`array[22]`
+- 原厂 UI 在 `Page_system_monitor.UpdateUI_CPUFan/UpdateUI_GPUFan()` 中把 raw tach 换算为显示 RPM：
+  - `rpm = 60.0 / (5.565217391304348E-05 * raw_tach) * 2.0`
+  - 等价常数约 `2156220 / raw_tach`
+- 因此 `array[2..7]` 不是转速本身，而是 tach 周期计数；raw 越大代表实际 RPM 越低。
+- 原厂 duty 显示不是直接显示 raw，而是按 `raw / TurboFan_MaxDuty * 100` 或自定义模式下 `raw / 255 * 100` 换算百分比。
+
+### 温度读取
+- 原厂 `FanSpeedSetting.FAN.Read_FanSpeed()` 同样从 `GetWMIPackage(12)` 读取温度相关字段。
+- 原厂字段读取：
+  - CPU remote temp：`Global.RW_REG.CalCPUTemp(Global.RW_REG.GetTDP(), array[18])`
+  - GPU1 remote temp：`array[21]`
+  - GPU2 remote temp：`array[24]`
+- Linux 实机上 `0x0C[0x10..0x15]` 都表现为温度样字段；其中 `0x11`/`0x12` 与 CPU/GPU 传感器交叉匹配，当前 UI 只把确认度较高的 CPU/GPU 温度放在首页，其他 offset 放高级页。
+- CPU 温度在原厂 UI 里可能经过 `CalCPUTemp(TDP, raw)` 修正；Linux 当前直接展示 EC 单字节摄氏度候选值，后续若要完全对齐 OEM，需要继续反编译 `RWReg.CalCPUTemp` 与 `GetTDP`。
+
+### 风扇模式和 AppSettings
+- 原厂 `FanSpeedSetting.FAN.SetFanMode(byte mode)` 明确顺序：
+  - `SetWMI(121, 1, mode)`
+  - `SetAPPData(4, 5, 1, [mode])`
+- 对 Linux `_DSM` 来说，这等价于 command `0x79`，payload `(0x01 << 24) | mode`。
+- 原厂按钮映射：
+  - auto -> `mode=0`
+  - max -> `mode=1`
+  - silent -> `mode=3`
+  - maxq -> `mode=5`
+  - custom -> `mode=6`
+- 旧实现把 silent 当 `2` 是错误的；官方静音值是 `3`。
+- 原厂风扇当前选中态从 `GetAPPData(4, 5, 1)` 读取，不从 `0x0D[0x0E]` 推导。
+- 原厂是否显示 Silent 不是无条件：
+  - `Init_Fan_Set_UI()` 中如果 `!Global.support_bit.FanLess`，会移除 `SP_Silent`。
+  - `FanLess` 来自能力位，而不是写一次后看是否生效。
+- 原厂是否显示 MaxQ 也不是无条件：
+  - `Read_WMI13()` 中 `InitFanMode == 5` 会设置 `Global.support_bit.MaxQ = true`。
+  - UI 中如果 `!Global.support_bit.MaxQ`，会移除 `SP_MaxQ`。
+
+### 风扇配置、自定义曲线与暂不开放项
+- 原厂 `FAN.Read_WMI13()` 读取 `GetWMIPackage(13)`，即 DCHU command `0x0D`。
+- 原厂读取：
+  - `FanCount = array[12]`
+  - `InitFanMode = array[14]`
+  - `SupportCustomFan = false` 条件：`FanCount <= 1` 或 `((array[43] >> 1) & 1) == 1`
+  - CPU 曲线：`T1/D1=array[16]/array[17]`，`T2/D2=array[18]/array[19]`，`T3/D3=array[20]/array[21]`，`T4/D4=100/100`。
+  - GPU1 曲线：`T1/D1=array[24]/array[25]`，`T2/D2=array[26]/array[27]`，`T3/D3=array[28]/array[29]`，`T4/D4=100/100`。
+  - GPU2 曲线：`T1/D1=array[32]/array[33]`，`T2/D2=array[34]/array[35]`，`T3/D3=array[36]/array[37]`，`T4/D4=100/100`。
+  - duty raw 不是百分比，原厂按 `round(raw / 255 * 100)` 转换显示。
+- 原厂 `FAN.SetCustomFanTable()` 会构造 256 字节包并调用 `SetWMIPackage(14, array)` 写入自定义风扇曲线；这对应 DCHU command `0x0E`，会写 EC 风扇表。
+- `SetWMIPackage(14)` 写入格式：
+  - `array[2..13]` 只写 CPU/GPU1/GPU2 的 `T2,D2,T3,D3`，duty 百分比按 `round(percent / 100 * 255)` 转回 raw。
+  - `array[14..31]` 写 CPU/GPU1/GPU2 的 `R12/R23/R34` 斜率，高字节在前。
+  - 斜率公式：`round((D_next - D_prev) / (T_next - T_prev) * 2.55 * 16.0)`。
+- 原厂 AppSettings page 4 offset 0 len 256 还保存一份 UI 持久化风扇表：
+  - offset 4/5/6/7/8 分别是 `InitFanMode/FanMode/FanCount/FanOffset/TurboFanStatus`。
+  - CPU 段：duty `16..19`，默认 duty `20..21`，温度 `22..25`，默认温度 `26..27`，R 值 little-endian `28..33`。
+  - GPU1 段同布局起始 `34`，GPU2 段同布局起始 `52`。
+- 风扇曲线写入涉及多个温度点、duty、斜率和 AppSettings 镜像，属于高风险 EC 表写入；当前 Linux 不开放该功能，只在高级页展示只读信息。
+- 原厂 `SetFanOffset(byte offset)` 使用 `SetWMI(121, 14, data)` 并 `SetAPPData(4, 7, 1, [offset])`；当前 Linux 不开放 fan offset。
+- 原厂 AntiDust 相关接口使用 `SetWMI(121, 40/41, ...)` 和 AppSettings page 4 offset 80/81；当前 Linux 不开放。
+
+### 电源模式和 AppSettings
+- `ControlCenter30.Page_1App` 是控制中心主页面，电源模式 UI 只直接写事件日志：
+  - Quiet click：`clevocc30^101^0`
+  - PowerSaving click：`clevocc30^101^1`
+  - Performance click：`clevocc30^101^2`
+  - Entertainment click：`clevocc30^101^3`
+- `Page_1App.ReadPowerModeInsydeBuffer()` 明确读取 `ReadAppSettings(1, 1, 1)` 作为当前电源模式，并据此高亮按钮和切换图标。
+- `Page_1App` 会监听 `PowerBiosServerLog/OutLog` 事件，如收到 `clevofnkey^202` 或 `Set PowerMode:` 再重新读取 AppSettings。
+- 由于真正处理 `clevocc30^101^n` 的 FnKey/服务端未在当前 AppX 静态目录中完整展开，电源硬件写入链路还带有外部服务组件缺口。
+- 已找到的原厂电源行为结论：
+  - 电源选中态来自 `ReadAppSettings(1, 1, 1)`。
+  - 模式值为 `0=quiet`、`1=powersaving`、`2=performance`、`3=entertainment`。
+  - 硬件写入应使用 `SetWMI(121, 25, mode)`，也就是 DCHU command `0x79`、subcommand `0x19`。
+  - performance 模式会按 DTT/turbo 标志把写入值 OR 上 `0x80` 或 `0x40`：`ReadAppSettings(1,32,1)==1` 且 DTT 驱动已安装时 OR `0x80`，`ReadAppSettings(4,8,1)==1` 时 OR `0x40`；如果 DTT 驱动缺失，原厂会清掉对应 AppSettings 标志并回写普通 performance。
+- Linux 当前只公开 `power-mode 0..3`，不公开 OR `0x80/0x40` 的裸值；这样更安全，也符合“不暴露 payload”的约束。
+
+### TurboFan、DTT 与性能页附加开关
+- Control Center 性能页 `CB_TurnOnTruboFan_Click()` 写入：
+  - `WriteAppSettings(4, 8, 1, [1/0])` 保存 TurboFan 勾选状态。
+  - 支持 DTT 时同步 `WriteAppSettings(1, 32, 1, [1/0])`。
+  - 硬件写入 `SetWMI(121, 25, 2 | (turbo << 6) | (dtt << 7))`。
+  - 写完会把风扇模式 AppSettings `4:5` 回到 `0`，即自动模式。
+- `SetFanMode(7)` 在 Control Center 里被当作 TurboFan 快捷分支：它写 `SetWMI(121,1,7)`，只更新 `WriteAppSettings(4,8,1,[1])`，不把 `4:5` 写成 `7`。
+- `CB_CPUDynamic_Click()` 是 DTT/CPU dynamic：选中写 `WriteAppSettings(1,32,1,[1])` 和 `SetWMI(121,25,130)`，取消写 `[0]` 和 `SetWMI(121,25,2)`。
+- 结论：TurboFan/DTT 与 performance 模式耦合，会同时改风扇模式镜像和电源硬件值；Linux 目前不应把它们暴露成独立裸写入口。
+
+### 独显直连 / GPU MUX 切换
+- 原厂存在两代 MUX/显卡切换接口。
+- 旧二状态接口：
+  - 能力位来自 `GetWMI(122)` bit `0x100000`，设置 `SupportMSHybrid_dGPUSwicth`。
+  - 当前状态读取 `Global.dchu.GetWMI(84)`；返回 `1` 时原厂勾选 Discrete，否则勾选 MSHybrid。
+  - 写入 `Features.GPUSwitch(int value)`，即 `SetWMI(121, 11, value)`；`0=MSHybrid`，`1=Discrete`。
+  - UI 写完会提示用户并执行 `shutdown.exe -f -r -t 0` 立即重启。
+- 新四状态接口：
+  - 能力位来自 AppSettings page 7 capability buffer 的 `offset[18] bit0`，设置 `SupportMSHybrid_dGPU_iGPUSwicth`。
+  - 查询当前状态：`SetWMIPackageEx(4, array[0]=21, out o_buffer)`。
+  - `o_buffer[0]` 状态：`1=iGPU`，`2=dGPU`，`3=MSHybrid`，`4=DDS`。
+  - `o_buffer[1]` 是可见选项 bitmask：bit0 iGPU，bit1 dGPU，bit2 MSHybrid；DDS 菜单项存在，但当前片段未看到单独可见 bit 判断。
+  - 写入 `Features.GPUSwitch_new(byte value)`，即 `SetWMIPackageEx(4, array[0]=22, array[1]=value)`。
+  - UI 写完同样立即重启。
+- 结论：MUX 切换需要能力位、状态回读和强制重启闭环；如果后续实现 Linux UI，必须做成受保护流程，不能作为普通即时开关。
+
+### GPU 超频、限频与 GC6
+- GPU 超频不是单纯 DCHU/EC 写入。原厂通过 `ControlGPU.exe` 调 `NVGPU_DLL.dll`：
+  - `InitGPU_API()` 初始化 NVIDIA API。
+  - `Get_GPU_TotalNumber()`、`Get_GPU_Base_Clock()`、`Get_NVDeviceID(0)`、`Drvier_version()` 读取设备信息。
+  - 设备信息写 AppSettings page 5：offset `0` len `2` 保存 NV device id，offset `6` len `7` 保存 GPU 数量、base clock、ready flag、驱动版本。
+  - `Set_CoreOC(index, offset)` 和 `Set_MEMOC(index, offset)` 写核心/显存 offset。
+  - `Lock_Frequency(index, freq)` 做 NVIDIA lock frequency，多 GPU 时 index 0/1 都写。
+- FnKey/GPU 组件从 `GetWMIPackage(17)` 读取默认 GPU OC 表：
+  - NV ID 槽在 offset `48/50`、`64/66`、`80/82`、`96/98`。
+  - 默认 core/VRAM offset 在 `52/54`、`68/70`、`84/86`、`100/102`。
+  - 用户自定义 GPU OC offset 持久化在 AppSettings page 5 offset 16 len 8，最多两块 GPU 的 int16 core/mem pair。
+- GPU clock limit 和 GC6：
+  - 限频能力来自 v1 `offset[15] bit0` 或对应 v0 能力位，读取 `SetWMIPackageEx(4, array[0]=9)`。
+  - 返回 `o_buffer[2..9]` 分别给 entertainment/performance/powerSaving/quiet 的 limit clock，`o_buffer[10..11]` 还用于临时/温度相关值。
+  - GC6 能力来自 v1 `offset[15] bit1`，读取 `SetWMIPackageEx(4, array[0]=10)`，再调用 `ControlGPU.exe GC6:<state>` 写 NVIDIA 注册表 `EnableCoprocPowerControl`。
+- 结论：GPU OC/限频依赖 NVIDIA 私有 DLL 和 Windows 注册表，Linux 不能把它归入 `/proc/clevo_dchu_control` 的简单白名单。
+
+### CPU / 内存超频与 AMD Ryzen Master
+- CPU OC 能力来源：
+  - `GetWMI(16)` bit `0x40` 设置 `SupportCPUOC_WMI16Bit6`。
+  - `GetWMI(122)` bit `0x800000` 设置 `SupportCPUOC_WMI122Bit23`。
+  - `GetWMI(96)` bit `0x40` 用于 under-volting controller 检查；置位时原厂会禁用相关能力。
+  - `GetWMI(122)` bit `0x1000000` 表示 XMP 能力。
+- Intel CPU OC 不是 DCHU 直接调电压/倍频。UI 把设置写入 AppSettings page 6，后台 `CC30_BG` 通过 Intel XTU SDK `TuningLibrary.Instance.Tune(ID, value, rebootRequired)` 应用。
+- 已确认 page 6 字段：
+  - offset 32 len1：保存标志。
+  - offset 33/37/41 len4：PL1、PL2、PL time float。
+  - offset 49 len4：CPU VR current/limit。
+  - offset 53..60 len1：P-core ratio id 29/30/31/32/42/43/96/97。
+  - offset 61/65/69 len4：CPU voltage offset、override voltage float、graphics voltage。
+  - offset 73/74 len1：CPU voltage mode、CPU VR auto。
+  - offset 75..76 len1：额外 P-core ratio id 107/108。
+  - offset 77..84 len1：E-core ratio id 4500..4507。
+- `DCHUService` 对 AMD 的主要证据是安装/调用 `AMDRyzenMasterDriver.inf/sys`、`Device.dll`、`Platform.dll`、`InstallRyzenMasterSDK.exe`、`GetProductdll.dll`；它会在 AMD CPU 上通过服务侧启动安装入口。
+- 结论：CPU/内存超频属于 AppSettings + XTU/Ryzen Master SDK + 后台服务共同实现，当前 Linux 不应开放写入口；若以后实现，需要另立受保护模块并做平台检测。
+
+### 电池、节能和充放电控制
+- Battery Saver 托盘项：
+  - 能力位来自 v1 `offset[15] bit2`，设置 `SupportBatterySaverSetting`。
+  - 读取 `SetWMIPackageEx(4, array[0]=13, array[1]=0, array[2]=0)`，状态在 `o_buffer[0]`。
+  - 写入 `SetWMIPackageEx(4, array[0]=13, array[1]=1, array[2]=status)`。
+- EnergySave：
+  - `EnableEnergySave(false/true)` 写 `SetWMI(118, 0x05000000/0x05000001)`。
+  - 节能计划会生成多条 `SetWMI(118, data)`：`0x01000000` 当前时间，`0x02000000` 星期和放电阈值，`0x03000000`/`0x04000000` 两段 schedule，`0x06000000` 停止放电/停止充电阈值。
+  - 默认充放电阈值从 `GetWMIPackage(17)` offset `0xD0`/`0xD1` 读取。
+  - 能源之星模式 `SetEnergyStarMode(mode)` 写 `SetWMI(79, mode)`。
+- BatteryUtility 电池刷新：
+  - 读取 `GetWMIPackage(7)`，解析生产日期、循环次数、满充容量、设计容量、BatteryStatus、PFStatus、OperationStatus、StopChargingThreshold。
+  - 读取同一个 WMI7 的 offset 32 起阈值和条件表达式，用于判断电池健康/是否建议刷新。
+  - 刷新流程写 `SetWMI(121,28,ACOFF)`、`SetWMI(121,29,Refresh)`、`SetWMI(118,7,FlexiCharge)`，并临时切换 Windows 电源计划。
+- 结论：电池/节能接口会实际改变充放电策略和 Windows 电源计划，不进入当前 Linux 公开写接口；后续最多先做只读展示。
+
+### 其他已确认但不进入当前公开接口的能力
+- ASPM/电源计划：
+  - `ReadASPMControlStatus()` 读 `SetWMIPackageEx(4, array[0]=15)`，返回各电源模式 AC/DC ASPM 表。
+  - `Read_PwerPlanTable()` 读 `SetWMIPackageEx(4, array[0]=29)`，返回各模式对应 Windows power plan。
+  - `Set_PowerPlan()` 调 Windows power plan GUID，不是 EC 控制。
+- PgUp/PgDn 开关：
+  - AppSettings `page=1 offset=33` 保存 UI 状态。
+  - 旧 BIOS 写 `SetWMI(121,45,value)`，新 BIOS 写 `SetWMIPackageEx(4, array[0]=26, array[1]=value)`。
+- Battery low control：
+  - 能力位来自 v1 `offset[16] bit6`。
+  - 原厂用 AppSettings `page=1 offset=13` 保存亮度和电量，电池低时改 Windows 亮度，恢复条件满足后再恢复。
+- 低刷新率：
+  - Control Center 用 AppSettings `page=1 offset=28` 保存勾选状态。
+  - 实际刷新率切换走 Windows display API，不是 DCHU 写 EC。
+- 这些能力说明原厂 Control Center 是“DCHU + AppSettings + Windows API + 第三方 SDK”的组合；Linux 侧要保持 `/proc/clevo_dchu_control` 小而可验证。
+
+### 能力位和 UI 可见性
+- `FanSpeedSetting.InsydeDriver.Init_WMI()` 先读 `GetWMI(70)`，再读 `GetAPPData(7, 0, 256)` 决定走 `BIOSSpecialFeature_v0_0` 或 `BIOSSpecialFeature_v1_0`。
+- v0 能力来源：
+  - `GetWMI(16)`：UWP capability bits，bit0 PowerMode、bit7 FanSetting 等。
+  - `GetWMI(122)`：bit15 `FanLess`。
+  - `GetWMI(96)`：bit7 `AntiDust_Fan`、bit10 关闭 `FanOffset`。
+- v1 能力来源：
+  - AppSettings page 7 的结构化 capability buffer。
+  - `num4` bit0 PowerMode、bit7 FanSetting 等。
+  - `num2` bit15 `FanLess`。
+  - `num3` bit7 `AntiDust_Fan`、bit10 关闭 `FanOffset`、bit12 `DTT`。
+  - `offset[15]` bit0/bit1/bit2 分别是 `SupportLimitGPUClock`、`SupportGC6Setting`、`SupportBatterySaverSetting`。
+  - `offset[16]` bit4 `TurboFan`，bit5 `AMDCC30PowerMode`，bit6 `BATLowControl`。
+  - `offset[17]` low nibble 是四个电源模式是否可见，high nibble 是 `SupportPowerModeUI_ID`。
+  - `offset[18]` bit0 是新四状态 GPU MUX，bit1/bit2/bit3 分别对应 HDR limit、165MHz panel S3 flicker、UCSI yellow mark workaround。
+- 实机 Linux 读过的能力命令：
+  - `0x10` 返回 `0x93`。
+  - `0x52` 返回 `0x04680025`。
+  - `0x60` 返回 `0x021c`。
+  - `0x7A` 返回 `0x70020053`。
+- 当前 Linux UI 的能力裁剪应优先从稳定可解释字段开始；未完全确认的 capability bit 可以在高级页展示，不应直接变成写入口。
+
+### 0x0D[0x0E] 的错误用法结论
+- Linux 实机脚本 `scripts/probe-mode-coupling.sh` 已验证 `0x0D[0x0E]` 会被电源模式和风扇模式共同覆盖。
+- 该字段无法同时区分：
+  - `power:1`、`power:3`、`fan:maxq`、部分 `fan:auto` 场景都会落到 `0x02`。
+  - `power:2` 和旧错误 `fan:silent=2` 都可能落到 `0x08`。
+- 因此 `0x0D[0x0E]` 只能作为高级调试信息，不能作为 GUI 电源/风扇按钮的选中态来源。
+- 官方 AppSettings 读回路径已经解释了为什么 UI 选中态需要另一路存储：硬件状态字段与 UI 状态字段不是同一个概念。
+
+### 当前 Linux 对齐策略
+- Linux 内核模块只保留一个统一控制入口 `/proc/clevo_dchu_control`，只接受白名单命令：
+  - `fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6>`
+  - `power-mode <0..3>`
+- Linux 内核模块只保留受限 AppSettings 兼容读回 `/proc/clevo_dchu_app_settings`：
+  - `page=1 offset=1`：电源模式选中态。
+  - `page=4 offset=5`：风扇模式选中态。
+- 该兼容层不是完整 AppSettings，不提供任意 page/offset 读写，不暴露 payload。
+- 写 `fan-mode` 按官方顺序：先写硬件 `SCMD(0x79, sub=1)`，成功后同步 AppSettings 兼容字段 `4:5`。
+- 写 `power-mode` 按官方读回语义：先更新 AppSettings 兼容字段 `1:1`，再写硬件 `SCMD(0x79, sub=0x19)`；硬件失败则回滚兼容字段，避免 UI 显示未生效状态。
+- GUI 按钮高亮只读 `app_power_mode/app_fan_mode`，不再使用 `mode_status` 推导。
+
+### 仍未完全确认的点
+- Windows 原厂完整 AppSettings 存储由 AcpiBridge IOCTL `0x32240c` 管理；Linux 目前没有确认同等持久存储位置，因此受限 AppSettings 是运行时兼容镜像。
+- CPU 温度的 `CalCPUTemp(TDP, raw)` 修正尚未完整复刻；当前只展示 EC raw 摄氏度候选。
+- FanLess、TurboFan、DTT、MUX、Battery Saver 等能力位已有原厂代码证据，但 Linux 当前还没有把所有能力位都映射成 UI 自动隐藏规则；能确认的先用，不能确认的只读展示。
+- MUX、风扇曲线、GPU OC、CPU OC、电池节能、AntiDust 等高级写入虽然已有静态链路，但尚未做 Linux 实机逐项验证和失败恢复设计；暂不公开写入口。
+- InstallShield 未解包服务组件可能包含 FnKey/PowerBiosServer 的最终电源落地逻辑；当前结论基于已解包 AppX、DLL 反汇编和 Linux 实机验证。
