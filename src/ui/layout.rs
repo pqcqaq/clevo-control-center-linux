@@ -10,6 +10,7 @@ const SIDEBAR_CONTENT_WIDTH: f32 = 152.0;
 const SIDEBAR_HORIZONTAL_MARGIN: f32 = 12.0;
 const SHELL_GAP: f32 = 12.0;
 const NAV_BUTTON_HEIGHT: f32 = 36.0;
+const NAV_BUTTON_GAP: f32 = 10.0;
 const NAV_BUTTON_SKEW: f32 = 12.0;
 const CONTENT_PANEL_MARGIN: f32 = 18.0;
 
@@ -48,7 +49,7 @@ fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
                 ui.add_space(22.0);
                 for page in ControlPage::all() {
                     nav_button(ui, app, *page);
-                    ui.add_space(7.0);
+                    ui.add_space(NAV_BUTTON_GAP);
                 }
             });
         });
