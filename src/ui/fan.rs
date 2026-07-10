@@ -6,8 +6,9 @@ use eframe::egui::{
 use super::app::ClevoLedApp;
 use super::widgets::{page_header, toggle_switch};
 use crate::fan_curve::{
-    FanCurve, FanCurveChannel, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
-    FAN_CURVE_MAX_DUTY, FAN_CURVE_MAX_TEMP, FAN_CURVE_MIN_DUTY, FAN_CURVE_MIN_TEMP,
+    default_fan_curve_profiles, FanCurve, FanCurveChannel, FanCurveSelection, FanCurveSettings,
+    FAN_CURVE_COUNT, FAN_CURVE_MAX_DUTY, FAN_CURVE_MAX_TEMP, FAN_CURVE_MIN_DUTY,
+    FAN_CURVE_MIN_TEMP,
 };
 
 const CURVE_PANEL_HEIGHT: f32 = 236.0;
@@ -274,27 +275,55 @@ fn selected_point_editor_slot(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
+    let has_unsaved_changes = fan_curve_has_unsaved_changes(&app.fan_curve_draft, &app.fan_curves);
+    let can_reset_current =
+        current_fan_curve_differs_from_default(&app.fan_curve_draft, app.fan_curve_tab);
+
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
         if ui
-            .add_sized(vec2(100.0, 34.0), Button::new("恢复"))
+            .add_enabled(
+                has_unsaved_changes,
+                Button::new("恢复").min_size(vec2(100.0, 34.0)),
+            )
             .clicked()
         {
             app.restore_fan_curve_draft();
         }
         if ui
-            .add_sized(vec2(100.0, 34.0), Button::new("重置"))
+            .add_enabled(
+                can_reset_current,
+                Button::new("重置").min_size(vec2(100.0, 34.0)),
+            )
             .clicked()
         {
             app.reset_current_fan_curve_profile();
         }
         if ui
-            .add_sized(vec2(100.0, 34.0), Button::new("保存"))
+            .add_enabled(
+                has_unsaved_changes,
+                Button::new("保存").min_size(vec2(100.0, 34.0)),
+            )
             .clicked()
         {
             app.save_fan_curve_draft();
         }
     });
+}
+
+fn fan_curve_has_unsaved_changes(draft: &FanCurveSettings, saved: &FanCurveSettings) -> bool {
+    draft.clone().sanitized() != saved.clone().sanitized()
+}
+
+fn current_fan_curve_differs_from_default(draft: &FanCurveSettings, tab: usize) -> bool {
+    let Some(current) = draft.profiles.get(tab) else {
+        return false;
+    };
+    let Some(default) = default_fan_curve_profiles().get(tab).cloned() else {
+        return false;
+    };
+
+    current.clone().sanitized() != default
 }
 
 fn channel_curve_mut(app: &mut ClevoLedApp, channel: FanCurveChannel) -> &mut FanCurve {
@@ -338,5 +367,34 @@ mod tests {
 
         assert_eq!(temp, 65);
         assert_eq!(duty, 50);
+    }
+
+    #[test]
+    fn fan_curve_unsaved_changes_tracks_draft_against_saved_settings() {
+        let saved = FanCurveSettings::default();
+        let mut draft = saved.clone();
+
+        assert!(!fan_curve_has_unsaved_changes(&draft, &saved));
+
+        draft.profiles[0].cpu.set_point(1, 61, 63);
+
+        assert!(fan_curve_has_unsaved_changes(&draft, &saved));
+        assert!(!fan_curve_has_unsaved_changes(&saved, &saved));
+    }
+
+    #[test]
+    fn fan_curve_reset_availability_tracks_current_profile_default() {
+        let mut draft = FanCurveSettings::default();
+
+        assert!(!current_fan_curve_differs_from_default(&draft, 0));
+
+        draft.profiles[0].gpu.set_point(1, 61, 63);
+
+        assert!(current_fan_curve_differs_from_default(&draft, 0));
+        assert!(!current_fan_curve_differs_from_default(&draft, 1));
+        assert!(!current_fan_curve_differs_from_default(
+            &draft,
+            FAN_CURVE_COUNT
+        ));
     }
 }
