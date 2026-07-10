@@ -153,6 +153,22 @@ pub(super) fn other_info(ui: &mut Ui, snapshot: Option<&HardwareSnapshot>) {
                 ui.monospace("0x10");
                 ui.label(format_optional_u32_hex(config.psf5));
                 ui.end_row();
+                ui.label("BIOS feature version");
+                ui.monospace("WMI4 sub8 [0..1]");
+                ui.label(format_optional_u16_hex(config.bios_feature_version));
+                ui.end_row();
+                ui.label("BIOS feature offset18");
+                ui.monospace("WMI4 sub8 [18]");
+                ui.label(format_optional_u8(config.bios_feature_offset18));
+                ui.end_row();
+                ui.label("GPU MUX 当前状态");
+                ui.monospace("WMI4 sub21 [0]");
+                ui.label(format_gpu_mux_state(config.gpu_mux_current));
+                ui.end_row();
+                ui.label("GPU MUX 可见选项");
+                ui.monospace("WMI4 sub21 [1]");
+                ui.label(format_gpu_mux_options(config.gpu_mux_options));
+                ui.end_row();
             }
         });
 
@@ -209,6 +225,18 @@ pub(super) fn other_info(ui: &mut Ui, snapshot: Option<&HardwareSnapshot>) {
                     "旧版独显直连/MUX",
                     "PSF2 bit20",
                     config.legacy_gpu_mux_capability(),
+                );
+                capability_row(
+                    ui,
+                    "新版四状态 GPU MUX",
+                    "WMI4 sub8 offset18 bit0",
+                    config.new_gpu_mux_capability(),
+                );
+                capability_row(
+                    ui,
+                    "GPU MUX 总能力",
+                    "PSF2 bit20 / WMI4 sub8 bit0",
+                    config.gpu_mux_capability(),
                 );
                 capability_row(
                     ui,
@@ -340,10 +368,50 @@ fn format_optional_u8(value: Option<u8>) -> String {
         .unwrap_or_else(|| "--".to_owned())
 }
 
+fn format_optional_u16_hex(value: Option<u16>) -> String {
+    value
+        .map(|value| format!("0x{value:04x}"))
+        .unwrap_or_else(|| "--".to_owned())
+}
+
 fn format_optional_u32_hex(value: Option<u32>) -> String {
     value
         .map(|value| format!("0x{value:08x}"))
         .unwrap_or_else(|| "--".to_owned())
+}
+
+fn format_gpu_mux_state(value: Option<u8>) -> String {
+    match value {
+        Some(1) => "iGPU (1)".to_owned(),
+        Some(2) => "dGPU (2)".to_owned(),
+        Some(3) => "MSHybrid (3)".to_owned(),
+        Some(4) => "DDS (4)".to_owned(),
+        Some(value) => format!("unknown ({value})"),
+        None => "--".to_owned(),
+    }
+}
+
+fn format_gpu_mux_options(value: Option<u8>) -> String {
+    let Some(value) = value else {
+        return "--".to_owned();
+    };
+
+    let mut options = Vec::new();
+    if value & 0x01 != 0 {
+        options.push("iGPU");
+    }
+    if value & 0x02 != 0 {
+        options.push("dGPU");
+    }
+    if value & 0x04 != 0 {
+        options.push("MSHybrid");
+    }
+
+    if options.is_empty() {
+        format!("none (0x{value:02x})")
+    } else {
+        format!("{} (0x{value:02x})", options.join(" / "))
+    }
 }
 
 fn capability_row(ui: &mut Ui, label: &str, source: &str, value: Option<bool>) {

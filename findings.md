@@ -314,13 +314,20 @@
   - 写入 `Features.GPUSwitch(int value)`，即 `SetWMI(121, 11, value)`；`0=MSHybrid`，`1=Discrete`。
   - UI 写完会提示用户并执行 `shutdown.exe -f -r -t 0` 立即重启。
 - 新四状态接口：
-  - 能力位来自 AppSettings page 7 capability buffer 的 `offset[18] bit0`，设置 `SupportMSHybrid_dGPU_iGPUSwicth`。
+  - 能力 buffer 由 `SetWMIPackageEx(4, array[0]=8, out o_buffer)` 读取，原厂随后写入 AppSettings page 7。
+  - 能力位来自这个 capability buffer 的 `offset[18] bit0`，设置 `SupportMSHybrid_dGPU_iGPUSwicth`。
   - 查询当前状态：`SetWMIPackageEx(4, array[0]=21, out o_buffer)`。
   - `o_buffer[0]` 状态：`1=iGPU`，`2=dGPU`，`3=MSHybrid`，`4=DDS`。
-  - `o_buffer[1]` 是可见选项 bitmask：bit0 iGPU，bit1 dGPU，bit2 MSHybrid；DDS 菜单项存在，但当前片段未看到单独可见 bit 判断。
+  - `o_buffer[1]` 是可见选项 bitmask：bit0 iGPU，bit1 dGPU，bit2 MSHybrid；DDS 菜单项存在且状态值可读/可写，但原厂代码没有看到按 bitmask 放出 DDS 的逻辑。
   - 写入 `Features.GPUSwitch_new(byte value)`，即 `SetWMIPackageEx(4, array[0]=22, array[1]=value)`。
   - UI 写完同样立即重启。
-- 结论：MUX 切换需要能力位、状态回读和强制重启闭环；如果后续实现 Linux UI，必须做成受保护流程，不能作为普通即时开关。
+- 本机 Linux 已读旧 `GetWMI(122)`/`0x7A` 返回 `0x70020053`，未置位 `0x00100000`，所以如果 Windows 原厂控制台支持独显直连，应该走新四状态路径而不是旧二状态路径。
+- 2026-07-10 用扩展后的只读 Linux 模块实机确认：
+  - `bios_feature_04_08_version = 0x0100`。
+  - `bios_feature_04_08_offset18 = 0x4d`，bit0 已置位，确认支持新四状态 GPU MUX。
+  - `gpu_mux_04_15_current = 0x02`，当前是 `dGPU`。
+  - `gpu_mux_04_15_options = 0x06`，原厂可见选项为 `dGPU` 和 `MSHybrid`；`iGPU` 不显示。
+- 结论：MUX 切换需要先读 `WMI4/sub8 offset18 bit0` 能力，再读 `WMI4/sub21` 当前状态/可见选项；写入必须是受保护流程，写后提示并执行重启，不能作为普通即时开关。
 
 ### GPU 超频、限频与 GC6
 - GPU 超频不是单纯 DCHU/EC 写入。原厂通过 `ControlGPU.exe` 调 `NVGPU_DLL.dll`：
@@ -410,6 +417,12 @@
   - `0x52` 返回 `0x04680025`。
   - `0x60` 返回 `0x021c`。
   - `0x7A` 返回 `0x70020053`。
+  - `WMI4/sub8` 返回版本 `0x0100`，`offset[18]=0x4d`。
+  - `WMI4/sub21` 返回当前状态 `0x02`、选项 bitmask `0x06`。
+- Linux 模块从 2026-07-10 起把原厂新 MUX 所需的只读数据也并入 `/proc/clevo_dchu_config`：
+  - `bios_feature_04_08_version`：`SetWMIPackageEx(4, sub=8)` 返回的版本字节 `[0..1]`。
+  - `bios_feature_04_08_offset18`：新四状态 GPU MUX 能力位所在字节，bit0 为 `SupportMSHybrid_dGPU_iGPUSwicth`。
+  - `gpu_mux_04_15_current/options`：`SetWMIPackageEx(4, sub=21)` 返回的当前状态和可见选项 bitmask。
 - 当前 Linux UI 的能力裁剪应优先从稳定可解释字段开始；未完全确认的 capability bit 可以在高级页展示，不应直接变成写入口。
 
 ### 0x0D[0x0E] 的错误用法结论

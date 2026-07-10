@@ -155,6 +155,122 @@ static int clevo_dchu_eval(u32 function, const u8 *payload, size_t payload_len,
 	return ret;
 }
 
+static int clevo_dchu_eval_buffer(u32 function, const u8 *payload, size_t payload_len,
+				  u8 *result_buffer, size_t result_buffer_len,
+				  size_t *result_len)
+{
+	union acpi_object argv4[4];
+	union acpi_object package_element;
+	struct acpi_object_list input;
+	struct acpi_buffer output = { ACPI_ALLOCATE_BUFFER, NULL };
+	u8 buffer[DCHU_BUFFER_SIZE] = { 0 };
+	acpi_status status;
+	int ret = 0;
+
+	if (!dchu_handle)
+		return -ENODEV;
+	if (!result_buffer || !result_len)
+		return -EINVAL;
+	if (payload_len > sizeof(buffer))
+		return -EINVAL;
+	if (payload && payload_len)
+		memcpy(buffer, payload, payload_len);
+
+	argv4[0].type = ACPI_TYPE_BUFFER;
+	argv4[0].buffer.pointer = (u8 *)&dchu_guid;
+	argv4[0].buffer.length = 16;
+
+	argv4[1].type = ACPI_TYPE_INTEGER;
+	argv4[1].integer.value = 1;
+
+	argv4[2].type = ACPI_TYPE_INTEGER;
+	argv4[2].integer.value = function;
+
+	package_element.type = ACPI_TYPE_BUFFER;
+	package_element.buffer.pointer = buffer;
+	package_element.buffer.length = sizeof(buffer);
+
+	argv4[3].type = ACPI_TYPE_PACKAGE;
+	argv4[3].package.count = 1;
+	argv4[3].package.elements = &package_element;
+
+	input.count = ARRAY_SIZE(argv4);
+	input.pointer = argv4;
+
+	status = acpi_evaluate_object(dchu_handle, "_DSM", &input, &output);
+	if (ACPI_FAILURE(status)) {
+		pr_err("clevo_control_center: _DSM function=0x%02x failed: %s\n",
+		       function, acpi_format_exception(status));
+		return -EIO;
+	}
+
+	if (output.pointer) {
+		union acpi_object *obj = output.pointer;
+
+		if (obj->type == ACPI_TYPE_BUFFER) {
+			*result_len = min_t(size_t, obj->buffer.length, result_buffer_len);
+			memcpy(result_buffer, obj->buffer.pointer, *result_len);
+		} else {
+			ret = -EIO;
+		}
+		ACPI_FREE(output.pointer);
+	} else {
+		ret = -EIO;
+	}
+
+	return ret;
+}
+
+static size_t clevo_dchu_append_gpu_mux_info(char *output, size_t output_size)
+{
+	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
+	u8 result[DCHU_BUFFER_SIZE] = { 0 };
+	size_t result_len = 0;
+	size_t offset = 0;
+	u32 version;
+	int ret;
+
+	payload[0] = 8;
+	ret = clevo_dchu_eval_buffer(0x04, payload, sizeof(payload),
+				     result, sizeof(result), &result_len);
+	if (!ret && result_len > 18) {
+		version = ((u32)result[0] << 8) | result[1];
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_version integer 0x%x\n",
+				    version);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset18 integer 0x%02x\n",
+				    result[18]);
+	} else {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_version unknown\n");
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset18 unknown\n");
+	}
+
+	memset(payload, 0, sizeof(payload));
+	memset(result, 0, sizeof(result));
+	result_len = 0;
+	payload[0] = 21;
+	ret = clevo_dchu_eval_buffer(0x04, payload, sizeof(payload),
+				     result, sizeof(result), &result_len);
+	if (!ret && result_len > 1) {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "gpu_mux_04_15_current integer 0x%02x\n",
+				    result[0]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "gpu_mux_04_15_options integer 0x%02x\n",
+				    result[1]);
+	} else {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "gpu_mux_04_15_current unknown\n");
+		offset += scnprintf(output + offset, output_size - offset,
+				    "gpu_mux_04_15_options unknown\n");
+	}
+
+	return offset;
+}
+
 static int clevo_dchu_set_zone_rgb(u8 zone, u8 r, u8 g, u8 b)
 {
 	u8 payload[4] = { g, r, b, zone };
@@ -576,8 +692,7 @@ static const struct proc_ops clevo_dchu_app_settings_proc_ops = {
 static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
 				      size_t count, loff_t *ppos)
 {
-	struct dchu_result config = { 0 };
-	struct dchu_result feature = { 0 };
+	struct dchu_result *result;
 	char *output;
 	size_t output_size = DCHU_MAX_OUTPUT + 384;
 	size_t offset = 0;
@@ -587,33 +702,41 @@ static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
 	if (!output)
 		return -ENOMEM;
 
-	ret = clevo_dchu_eval(0x0d, NULL, 0, &config);
+	result = kzalloc(sizeof(*result), GFP_KERNEL);
+	if (!result) {
+		kfree(output);
+		return -ENOMEM;
+	}
+
+	ret = clevo_dchu_eval(0x0d, NULL, 0, result);
 	if (ret)
 		goto out;
 
 	offset += scnprintf(output + offset, output_size - offset, "config_0d ");
-	offset += scnprintf(output + offset, output_size - offset, "%s", config.text);
-	ret = clevo_dchu_eval(0x10, NULL, 0, &feature);
+	offset += scnprintf(output + offset, output_size - offset, "%s", result->text);
+	ret = clevo_dchu_eval(0x10, NULL, 0, result);
 	if (ret)
 		goto out;
-	offset += scnprintf(output + offset, output_size - offset, "psf5_10 %s", feature.text);
-	ret = clevo_dchu_eval(0x52, NULL, 0, &feature);
+	offset += scnprintf(output + offset, output_size - offset, "psf5_10 %s", result->text);
+	ret = clevo_dchu_eval(0x52, NULL, 0, result);
 	if (ret)
 		goto out;
-	offset += scnprintf(output + offset, output_size - offset, "psf1_52 %s", feature.text);
-	ret = clevo_dchu_eval(0x60, NULL, 0, &feature);
+	offset += scnprintf(output + offset, output_size - offset, "psf1_52 %s", result->text);
+	ret = clevo_dchu_eval(0x60, NULL, 0, result);
 	if (ret)
 		goto out;
-	offset += scnprintf(output + offset, output_size - offset, "psf4_60 %s", feature.text);
-	ret = clevo_dchu_eval(0x7a, NULL, 0, &feature);
+	offset += scnprintf(output + offset, output_size - offset, "psf4_60 %s", result->text);
+	ret = clevo_dchu_eval(0x7a, NULL, 0, result);
 	if (ret)
 		goto out;
-	offset += scnprintf(output + offset, output_size - offset, "psf2_7a %s", feature.text);
+	offset += scnprintf(output + offset, output_size - offset, "psf2_7a %s", result->text);
+	offset += clevo_dchu_append_gpu_mux_info(output + offset, output_size - offset);
 	offset += clevo_dchu_app_settings_format(output + offset, output_size - offset);
 
 	ret = simple_read_from_buffer(ubuf, count, ppos, output, offset);
 
 out:
+	kfree(result);
 	kfree(output);
 	return ret;
 }

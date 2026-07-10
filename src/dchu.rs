@@ -101,6 +101,14 @@ pub struct DchuConfig {
     #[serde(default)]
     pub psf5: Option<u32>,
     #[serde(default)]
+    pub bios_feature_version: Option<u16>,
+    #[serde(default)]
+    pub bios_feature_offset18: Option<u8>,
+    #[serde(default)]
+    pub gpu_mux_current: Option<u8>,
+    #[serde(default)]
+    pub gpu_mux_options: Option<u8>,
+    #[serde(default)]
     pub app_power_mode: Option<u8>,
     #[serde(default)]
     pub app_fan_mode: Option<u8>,
@@ -142,6 +150,17 @@ impl DchuConfig {
 
     pub fn legacy_gpu_mux_capability(&self) -> Option<bool> {
         capability_bit(self.psf2, 20)
+    }
+
+    pub fn new_gpu_mux_capability(&self) -> Option<bool> {
+        self.bios_feature_offset18.map(|value| value & 0x01 != 0)
+    }
+
+    pub fn gpu_mux_capability(&self) -> Option<bool> {
+        any_known_capability(&[
+            self.legacy_gpu_mux_capability(),
+            self.new_gpu_mux_capability(),
+        ])
     }
 
     pub fn gpu_oc_capability(&self) -> Option<bool> {
@@ -352,6 +371,24 @@ pub fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> {
             config.psf5 = Some(parse_u32_hex(value, "psf5_10")?);
             continue;
         }
+        if let Some(value) = line.strip_prefix("bios_feature_04_08_version ") {
+            config.bios_feature_version =
+                parse_optional_u16_hex(value, "bios_feature_04_08_version")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("bios_feature_04_08_offset18 ") {
+            config.bios_feature_offset18 =
+                parse_optional_u8_hex(value, "bios_feature_04_08_offset18")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("gpu_mux_04_15_current ") {
+            config.gpu_mux_current = parse_optional_u8_hex(value, "gpu_mux_04_15_current")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("gpu_mux_04_15_options ") {
+            config.gpu_mux_options = parse_optional_u8_hex(value, "gpu_mux_04_15_options")?;
+            continue;
+        }
         if let Some(value) = line.strip_prefix("app_power_mode ") {
             config.app_power_mode = parse_optional_u8(value, "app_power_mode")?;
             continue;
@@ -379,6 +416,30 @@ pub fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> {
 
 fn parse_u32_hex(value: &str, label: &str) -> Result<u32, String> {
     u32::from_str_radix(value.trim(), 16).map_err(|_| format!("invalid {label} integer"))
+}
+
+fn parse_optional_u16_hex(value: &str, label: &str) -> Result<Option<u16>, String> {
+    let Some(value) = value.trim().strip_prefix("integer 0x") else {
+        if value.trim() == "unknown" {
+            return Ok(None);
+        }
+        return Err(format!("invalid {label} value"));
+    };
+    u16::from_str_radix(value, 16)
+        .map(Some)
+        .map_err(|_| format!("invalid {label} integer"))
+}
+
+fn parse_optional_u8_hex(value: &str, label: &str) -> Result<Option<u8>, String> {
+    let Some(value) = value.trim().strip_prefix("integer 0x") else {
+        if value.trim() == "unknown" {
+            return Ok(None);
+        }
+        return Err(format!("invalid {label} value"));
+    };
+    u8::from_str_radix(value, 16)
+        .map(Some)
+        .map_err(|_| format!("invalid {label} integer"))
 }
 
 fn parse_optional_u8(value: &str, label: &str) -> Result<Option<u8>, String> {
@@ -870,6 +931,10 @@ mod tests {
              psf1_52 integer 0x4680025\n\
              psf4_60 integer 0x21c\n\
              psf2_7a integer 0x70020053\n\
+             bios_feature_04_08_version integer 0x0100\n\
+             bios_feature_04_08_offset18 integer 0x01\n\
+             gpu_mux_04_15_current integer 0x03\n\
+             gpu_mux_04_15_options integer 0x07\n\
              app_power_mode 2\n\
              app_fan_mode 3\n",
         )
@@ -882,6 +947,10 @@ mod tests {
         assert_eq!(config.psf1, Some(0x0468_0025));
         assert_eq!(config.psf4, Some(0x021c));
         assert_eq!(config.psf2, Some(0x7002_0053));
+        assert_eq!(config.bios_feature_version, Some(0x0100));
+        assert_eq!(config.bios_feature_offset18, Some(0x01));
+        assert_eq!(config.gpu_mux_current, Some(0x03));
+        assert_eq!(config.gpu_mux_options, Some(0x07));
         assert_eq!(config.app_power_mode, Some(2));
         assert_eq!(config.app_fan_mode, Some(3));
         assert_eq!(config.raw_config.len(), 32);
@@ -899,6 +968,7 @@ mod tests {
         assert_eq!(config.maxq_fan_capability(), Some(true));
         assert_eq!(config.custom_fan_table_capability(), Some(true));
         assert_eq!(config.legacy_gpu_mux_capability(), Some(true));
+        assert_eq!(config.gpu_mux_capability(), Some(true));
         assert_eq!(config.cpu_oc_capability(), Some(true));
         assert_eq!(config.xmp_capability(), Some(true));
         assert_eq!(config.gpu_oc_capability(), Some(true));
