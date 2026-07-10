@@ -11,6 +11,7 @@ use crate::fan_curve::{
 };
 
 const CURVE_PANEL_HEIGHT: f32 = 236.0;
+const SELECTED_POINT_EDITOR_HEIGHT: f32 = 34.0;
 
 pub(super) fn fan_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     page_header(ui, "风扇", "自定义风扇控制曲线");
@@ -92,12 +93,7 @@ fn fan_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp) {
         curve_panel(ui, app, FanCurveChannel::Gpu, available_width);
     }
 
-    if let Some(selection) = app.fan_curve_selection {
-        if selection.profile == app.fan_curve_tab {
-            ui.add_space(12.0);
-            selected_point_editor(ui, app, selection);
-        }
-    }
+    selected_point_editor_slot(ui, app);
 }
 
 fn curve_panel(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, width: f32) {
@@ -232,7 +228,7 @@ fn selected_point_editor(ui: &mut Ui, app: &mut ClevoLedApp, selection: FanCurve
 
     let mut temp = point.temp_celsius;
     let mut duty = point.duty_percent;
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
         ui.label(
             RichText::new(format!(
@@ -258,6 +254,23 @@ fn selected_point_editor(ui: &mut Ui, app: &mut ClevoLedApp, selection: FanCurve
             channel_curve_mut(app, selection.channel).set_point(selection.point, temp, duty);
         }
     });
+}
+
+fn selected_point_editor_slot(ui: &mut Ui, app: &mut ClevoLedApp) {
+    let selection = app
+        .fan_curve_selection
+        .filter(|selection| selection.profile == app.fan_curve_tab);
+
+    ui.add_space(12.0);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), SELECTED_POINT_EDITOR_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            if let Some(selection) = selection {
+                selected_point_editor(ui, app, selection);
+            }
+        },
+    );
 }
 
 fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
