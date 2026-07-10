@@ -4,6 +4,7 @@ use eframe::egui::{self, pos2};
 use eframe::NativeOptions;
 use egui::ViewportBuilder;
 
+mod battery_strategy;
 mod dchu;
 mod effects;
 mod fan_curve;

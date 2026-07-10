@@ -9,6 +9,7 @@ use eframe::egui::{
 };
 
 use super::layout;
+use crate::battery_strategy::BatteryStrategySettings;
 use crate::dchu::{self, HardwareSnapshot};
 use crate::fan_curve::{
     default_fan_curve_profiles, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
@@ -43,6 +44,7 @@ pub struct ClevoLedApp {
     pub(super) fan_curve_draft: FanCurveSettings,
     pub(super) fan_curve_tab: usize,
     pub(super) fan_curve_selection: Option<FanCurveSelection>,
+    pub(super) battery_strategy: BatteryStrategySettings,
     pub(super) last_error: Option<String>,
     pub(super) command_output: String,
     pub(super) command_status: Option<String>,
@@ -92,6 +94,7 @@ impl ClevoLedApp {
             fan_curve_draft: settings.fan_curves,
             fan_curve_tab: 0,
             fan_curve_selection: None,
+            battery_strategy: settings.battery_strategy,
             last_error: None,
             command_output: String::new(),
             command_status: None,
@@ -190,6 +193,17 @@ impl ClevoLedApp {
             self.fan_curve_draft.profiles[self.fan_curve_tab] = profile.clone();
             self.fan_curve_selection = None;
         }
+    }
+
+    pub(super) fn set_battery_strategy_enabled(&mut self, enabled: bool) {
+        self.battery_strategy.enabled = enabled;
+        self.save_battery_strategy();
+    }
+
+    pub(super) fn save_battery_strategy(&mut self) {
+        self.battery_strategy = self.battery_strategy.clone().sanitized();
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
     }
 
     pub(super) fn write_selected_color(&mut self, rgb: Rgb) {
@@ -307,6 +321,7 @@ impl ClevoLedApp {
         self.fan_curves = settings.fan_curves.clone();
         self.fan_curve_draft = settings.fan_curves;
         self.fan_curve_selection = None;
+        self.battery_strategy = settings.battery_strategy;
     }
 
     fn sync_external_settings(&mut self) {
@@ -364,6 +379,7 @@ impl ClevoLedApp {
                 f0_color: self.f0_color,
                 zones: self.selected_zones(),
                 fan_curves: self.fan_curves.clone(),
+                battery_strategy: self.battery_strategy.clone(),
                 window_pos: self.window_pos,
             }
         } else {

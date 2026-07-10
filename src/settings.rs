@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use crate::battery_strategy::BatteryStrategySettings;
 use crate::dchu::HardwareSnapshot;
 use crate::fan_curve::FanCurveSettings;
 use crate::model::{default_zones, normalize_zones, Mode, Rgb, ZoneId};
@@ -29,6 +30,8 @@ pub struct Settings {
     pub zones: Vec<ZoneId>,
     #[serde(default)]
     pub fan_curves: FanCurveSettings,
+    #[serde(default)]
+    pub battery_strategy: BatteryStrategySettings,
     pub window_pos: Option<[f32; 2]>,
 }
 
@@ -42,6 +45,7 @@ impl Default for Settings {
             f0_color: Rgb::WHITE,
             zones: default_zones(),
             fan_curves: FanCurveSettings::default(),
+            battery_strategy: BatteryStrategySettings::default(),
             window_pos: None,
         }
     }
@@ -53,6 +57,7 @@ impl Settings {
         self.brightness = self.brightness.clamp(1, 100);
         self.zones = normalize_zones(&self.zones);
         self.fan_curves = self.fan_curves.sanitized();
+        self.battery_strategy = self.battery_strategy.sanitized();
         if self.mode == Mode::Custom {
             self.running = false;
         }
@@ -216,6 +221,12 @@ mod tests {
                 selected_profile: Some(1),
                 ..FanCurveSettings::default()
             },
+            battery_strategy: BatteryStrategySettings {
+                enabled: true,
+                charge_start_percent: 45,
+                charge_stop_percent: 80,
+                ..BatteryStrategySettings::default()
+            },
             window_pos: Some([100.0, 200.0]),
         };
 
@@ -237,6 +248,8 @@ mod tests {
         assert_eq!(parsed.zones, vec![ZoneId::F0, ZoneId::F3, ZoneId::F6]);
         assert!(parsed.fan_curves.enabled);
         assert_eq!(parsed.fan_curves.selected_profile, Some(1));
+        assert!(parsed.battery_strategy.enabled);
+        assert_eq!(parsed.battery_strategy.charge_stop_percent, 80);
         assert_eq!(parsed.window_pos, Some([100.0, 200.0]));
     }
 
@@ -254,6 +267,11 @@ mod tests {
                 selected_profile: Some(2),
                 ..FanCurveSettings::default()
             },
+            battery_strategy: BatteryStrategySettings {
+                charge_start_percent: 100,
+                charge_stop_percent: 60,
+                ..BatteryStrategySettings::default()
+            },
             window_pos: Some([f32::NAN, 10.0]),
         }
         .sanitized();
@@ -263,6 +281,8 @@ mod tests {
         assert!(!settings.running);
         assert_eq!(settings.zones, default_zones());
         assert_eq!(settings.fan_curves.selected_profile, None);
+        assert_eq!(settings.battery_strategy.charge_start_percent, 55);
+        assert_eq!(settings.battery_strategy.charge_stop_percent, 60);
         assert_eq!(settings.window_pos, None);
     }
 }

@@ -5,7 +5,7 @@ use eframe::egui::{
 
 use super::app::ClevoLedApp;
 use super::widgets::{color_swatch, command_panel, fan_gauge, hardware_details, page_header};
-use super::{advanced, fan};
+use super::{advanced, battery, fan};
 use crate::dchu::{
     available_fan_modes, available_power_modes, selected_fan_mode_from_snapshot,
     selected_power_mode_from_snapshot, FanStatus, HardwareSnapshot,
@@ -27,6 +27,7 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         ControlPage::Overview => overview_page(ui, app),
         ControlPage::Lighting => lighting_page(ui, app),
         ControlPage::Fan => fan::fan_page(ui, app),
+        ControlPage::Battery => battery::battery_page(ui, app),
         ControlPage::Diagnostics => diagnostics_page(ui, app),
         ControlPage::Settings => settings_page(ui, app),
         ControlPage::Advanced => advanced_page(ui, app),

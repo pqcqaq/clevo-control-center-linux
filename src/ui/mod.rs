@@ -1,5 +1,6 @@
 mod advanced;
 mod app;
+mod battery;
 mod fan;
 mod layout;
 mod pages;

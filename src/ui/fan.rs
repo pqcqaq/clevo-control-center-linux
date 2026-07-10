@@ -4,7 +4,7 @@ use eframe::egui::{
 };
 
 use super::app::ClevoLedApp;
-use super::widgets::page_header;
+use super::widgets::{page_header, toggle_switch};
 use crate::fan_curve::{
     FanCurve, FanCurveChannel, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
     FAN_CURVE_MAX_DUTY, FAN_CURVE_MAX_TEMP, FAN_CURVE_MIN_DUTY, FAN_CURVE_MIN_TEMP,
@@ -42,7 +42,7 @@ pub(super) fn fan_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 fn fan_curve_switch(ui: &mut Ui, app: &mut ClevoLedApp) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
-        if switch(ui, app.fan_curve_draft.enabled) {
+        if toggle_switch(ui, app.fan_curve_draft.enabled) {
             app.set_fan_curve_enabled(!app.fan_curve_draft.enabled);
         }
         ui.label(
@@ -57,42 +57,6 @@ fn fan_curve_switch(ui: &mut Ui, app: &mut ClevoLedApp) {
                 .color(Color32::from_rgb(151, 145, 135)),
         );
     });
-}
-
-fn switch(ui: &mut Ui, enabled: bool) -> bool {
-    let desired_size = vec2(48.0, 24.0);
-    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
-    let t = ui
-        .ctx()
-        .animate_bool_with_time(response.id.with("switch"), enabled, 0.14);
-    let hover_t =
-        ui.ctx()
-            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-    let fill = mix_color(
-        Color32::from_rgb(49, 45, 37),
-        Color32::from_rgb(138, 88, 33),
-        t,
-    );
-    let stroke = mix_color(
-        Color32::from_rgb(72, 64, 52),
-        Color32::from_rgb(235, 168, 80),
-        t.max(hover_t * 0.5),
-    );
-    let painter = ui.painter_at(rect.expand(3.0));
-    painter.rect_filled(rect, 12.0, fill);
-    painter.rect_stroke(rect, 12.0, Stroke::new(1.0 + hover_t * 0.5, stroke));
-    let knob_x = rect.left() + 12.0 + (rect.width() - 24.0) * t;
-    painter.circle_filled(
-        pos2(knob_x, rect.center().y),
-        8.0,
-        Color32::from_rgb(239, 228, 207),
-    );
-    painter.circle_stroke(
-        pos2(knob_x, rect.center().y),
-        8.0,
-        Stroke::new(1.0, Color32::from_rgb(34, 30, 25)),
-    );
-    response.clicked()
 }
 
 fn fan_curve_tabs(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -373,17 +337,6 @@ fn pos_to_curve_point(plot: Rect, pos: Pos2) -> (u8, u8) {
     let duty =
         FAN_CURVE_MIN_DUTY as f32 + (FAN_CURVE_MAX_DUTY - FAN_CURVE_MIN_DUTY) as f32 * duty_t;
     (temp.round() as u8, duty.round() as u8)
-}
-
-fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(
-        mix(from.r(), to.r()),
-        mix(from.g(), to.g()),
-        mix(from.b(), to.b()),
-        mix(from.a(), to.a()),
-    )
 }
 
 #[cfg(test)]

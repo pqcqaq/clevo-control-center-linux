@@ -35,5 +35,5 @@
 ## 不再公开的内容
 
 - 不再提供任意 DCHU function 读取或写入入口。
-- 不再提供风扇曲线、MUX/独显直连、GPU/CPU 超频、Battery Saver、EnergySave、AntiDust、键盘亮度等未收敛为稳定 UI 控件的写入命令；这些高级能力只在“高级”页面按能力位只读展示，不进入当前写入接口。
+- 不再提供风扇曲线、MUX/独显直连、GPU/CPU 超频、Battery Saver、EnergySave、AntiDust、键盘亮度等未收敛为稳定 UI 控件的写入命令；其中“风扇”和“电池”页面只保存本地策略配置，不进入当前 DCHU 写接口。
 - 不再创建 `/proc/clevo_dchu` 调试节点。
