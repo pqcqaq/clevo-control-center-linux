@@ -157,7 +157,7 @@ impl AdvancedTab {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZoneColor {
     pub zone: ZoneId,
     pub rgb: Rgb,

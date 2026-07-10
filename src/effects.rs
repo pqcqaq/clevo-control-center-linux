@@ -62,7 +62,8 @@ pub fn colors_for_mode(mode: Mode, phase: f32, settings: &Settings) -> Vec<ZoneC
 }
 
 pub fn tick_interval(speed: u8) -> Duration {
-    let millis = 28_u64.saturating_sub((speed as u64 * 12) / 100).max(16);
+    let speed = speed.clamp(1, 100) as u64;
+    let millis = 130_u64.saturating_sub(((speed - 1) * 40) / 99);
     Duration::from_millis(millis)
 }
 
@@ -121,9 +122,9 @@ mod tests {
     }
 
     #[test]
-    fn effect_timing_uses_fine_grained_steps() {
-        assert!(tick_interval(1) <= Duration::from_millis(28));
-        assert!(tick_interval(100) <= Duration::from_millis(16));
+    fn effect_timing_limits_dchu_update_rate() {
+        assert_eq!(tick_interval(1), Duration::from_millis(130));
+        assert_eq!(tick_interval(100), Duration::from_millis(90));
         assert!(cycles_per_second(100) < 0.5);
     }
 

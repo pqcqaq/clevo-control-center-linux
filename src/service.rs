@@ -8,11 +8,13 @@ use std::time::{Duration, Instant};
 use crate::dchu;
 use crate::effects::{colors_for_mode, cycles_per_second, tick_interval};
 use crate::led::LedWriter;
-use crate::model::Mode;
+use crate::model::{Mode, ZoneColor};
 use crate::settings::{
     atomic_write_hardware_snapshot, hardware_snapshot_path, load_settings, service_lock_path,
     service_log_path, service_pid_path,
 };
+
+const STATIC_COLOR_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 pub fn ensure_service_running() {
     if active_service_pid().is_some() {
@@ -154,19 +156,48 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
     let snapshot_path = hardware_snapshot_path();
     let mut phase = 0.0_f32;
     let mut last_hardware_read = Instant::now() - Duration::from_secs(10);
+    let mut last_effect_update = Instant::now();
+    let mut last_static_refresh = Instant::now() - STATIC_COLOR_REFRESH_INTERVAL;
+    let mut last_led_colors: Vec<ZoneColor> = Vec::new();
 
     loop {
+        let now = Instant::now();
+        let elapsed = now.duration_since(last_effect_update);
+        last_effect_update = now;
+
         let settings = load_settings(&settings_path);
-        if settings.running {
-            let colors = colors_for_mode(settings.mode, phase, &settings);
-            if let Err(err) = writer.write(&colors) {
-                eprintln!("LED service write failed: {err}");
-            }
-            phase = (phase
-                + cycles_per_second(settings.speed) * tick_interval(settings.speed).as_secs_f32())
-            .fract();
-        } else if settings.mode == Mode::Custom {
+        if settings.mode == Mode::Custom {
             phase = 0.0;
+            last_effect_update = now;
+            let colors = colors_for_mode(settings.mode, phase, &settings);
+            if static_color_refresh_due(now, last_static_refresh, &colors, &last_led_colors) {
+                match writer.write(&colors) {
+                    Ok(()) => {
+                        last_led_colors = colors;
+                        last_static_refresh = now;
+                    }
+                    Err(err) => {
+                        eprintln!("LED service write failed: {err}");
+                    }
+                }
+            }
+        } else if settings.running {
+            phase = (phase + cycles_per_second(settings.speed) * elapsed.as_secs_f32()).fract();
+            let colors = colors_for_mode(settings.mode, phase, &settings);
+            if colors != last_led_colors {
+                match writer.write(&colors) {
+                    Ok(()) => {
+                        last_led_colors = colors;
+                    }
+                    Err(err) => {
+                        eprintln!("LED service write failed: {err}");
+                    }
+                }
+            }
+        } else {
+            last_effect_update = now;
+            last_led_colors.clear();
+            last_static_refresh = now - STATIC_COLOR_REFRESH_INTERVAL;
         }
 
         if last_hardware_read.elapsed() >= Duration::from_secs(2) {
@@ -182,5 +213,65 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
         }
 
         thread::sleep(tick_interval(settings.speed));
+    }
+}
+
+fn static_color_refresh_due(
+    now: Instant,
+    last_refresh: Instant,
+    colors: &[ZoneColor],
+    last_colors: &[ZoneColor],
+) -> bool {
+    colors != last_colors
+        || now.saturating_duration_since(last_refresh) >= STATIC_COLOR_REFRESH_INTERVAL
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Rgb, ZoneId};
+
+    #[test]
+    fn static_color_refresh_runs_when_color_changed() {
+        let now = Instant::now();
+        let colors = vec![ZoneColor {
+            zone: ZoneId::F0,
+            rgb: Rgb { r: 1, g: 2, b: 3 },
+        }];
+
+        assert!(static_color_refresh_due(
+            now,
+            now,
+            &colors,
+            &Vec::<ZoneColor>::new()
+        ));
+    }
+
+    #[test]
+    fn static_color_refresh_runs_on_heartbeat_interval() {
+        let now = Instant::now();
+        let colors = vec![ZoneColor {
+            zone: ZoneId::F0,
+            rgb: Rgb { r: 1, g: 2, b: 3 },
+        }];
+        let last_refresh = now - STATIC_COLOR_REFRESH_INTERVAL;
+
+        assert!(static_color_refresh_due(
+            now,
+            last_refresh,
+            &colors,
+            &colors
+        ));
+    }
+
+    #[test]
+    fn static_color_refresh_skips_same_recent_color() {
+        let now = Instant::now();
+        let colors = vec![ZoneColor {
+            zone: ZoneId::F0,
+            rgb: Rgb { r: 1, g: 2, b: 3 },
+        }];
+
+        assert!(!static_color_refresh_due(now, now, &colors, &colors));
     }
 }
