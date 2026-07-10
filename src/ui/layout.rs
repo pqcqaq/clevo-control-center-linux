@@ -6,17 +6,24 @@ use crate::model::ControlPage;
 const SIDEBAR_CONTENT_WIDTH: f32 = 152.0;
 const SIDEBAR_HORIZONTAL_MARGIN: f32 = 12.0;
 const SHELL_GAP: f32 = 12.0;
+const SHELL_HORIZONTAL_MARGIN: f32 = 12.0;
+const SHELL_BOTTOM_MARGIN: f32 = 12.0;
 const NAV_BUTTON_HEIGHT: f32 = 36.0;
 const CONTENT_PANEL_MARGIN: f32 = 18.0;
 
 pub(super) fn control_center(ui: &mut Ui, app: &mut ClevoLedApp) {
-    let available = ui.available_size();
+    let available = shell_available_size(ui.available_size());
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
     ui.horizontal(|ui| {
-        sidebar(ui, app, available.y);
-        ui.add_space(SHELL_GAP);
-        content_panel(ui, app, available.y);
+        ui.add_space(SHELL_HORIZONTAL_MARGIN);
+        ui.allocate_ui(available, |ui| {
+            ui.horizontal(|ui| {
+                sidebar(ui, app, available.y);
+                ui.add_space(SHELL_GAP);
+                content_panel(ui, app, available.y);
+            });
+        });
     });
 }
 
@@ -95,6 +102,13 @@ fn content_panel_inner_width(available_width: f32) -> f32 {
     (available_width - CONTENT_PANEL_MARGIN * 2.0).max(1.0)
 }
 
+fn shell_available_size(available_size: egui::Vec2) -> egui::Vec2 {
+    vec2(
+        (available_size.x - SHELL_HORIZONTAL_MARGIN * 2.0).max(1.0),
+        (available_size.y - SHELL_BOTTOM_MARGIN).max(1.0),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +126,11 @@ mod tests {
     fn content_panel_inner_width_accounts_for_frame_margin() {
         assert_eq!(content_panel_inner_width(772.0), 736.0);
         assert_eq!(content_panel_inner_width(12.0), 1.0);
+    }
+
+    #[test]
+    fn shell_available_size_keeps_outer_margin() {
+        assert_eq!(shell_available_size(vec2(960.0, 554.0)), vec2(936.0, 542.0));
+        assert_eq!(shell_available_size(vec2(10.0, 8.0)), vec2(1.0, 1.0));
     }
 }
