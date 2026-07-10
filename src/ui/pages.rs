@@ -8,7 +8,10 @@ use super::app::ClevoLedApp;
 use super::widgets::{
     color_swatch, command_panel, control_group, fan_gauge, hardware_details, page_header,
 };
-use crate::dchu::{available_fan_modes, FanStatus, HardwareSnapshot};
+use crate::dchu::{
+    available_fan_modes, selected_fan_mode_from_snapshot, selected_power_mode_from_snapshot,
+    FanStatus, HardwareSnapshot,
+};
 use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
 const GAUGE_GAP: f32 = 8.0;
@@ -158,20 +161,28 @@ fn overview_gauge_leading_space(available_width: f32, row_width: f32) -> f32 {
 }
 
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
+    let selected_power_mode = selected_power_mode_from_snapshot(app.hardware.as_ref());
     overview_button_row(
         ui,
         "电源模式",
         "POWER",
         &[("安静", "0"), ("省电", "1"), ("性能", "2"), ("娱乐", "3")],
+        selected_power_mode,
         |mode| app.run_dchu_write(&["power-mode", mode, "--i-understand"]),
     );
     ui.add_space(14.0);
     overview_control_separator(ui);
     ui.add_space(14.0);
     let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
-    overview_button_row(ui, "风扇模式", "FAN", &fan_modes, |mode| {
-        app.run_dchu_write(&["fan-mode", mode, "--i-understand"])
-    });
+    let selected_fan_mode = selected_fan_mode_from_snapshot(app.hardware.as_ref());
+    overview_button_row(
+        ui,
+        "风扇模式",
+        "FAN",
+        &fan_modes,
+        selected_fan_mode,
+        |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
+    );
 }
 
 fn overview_fan_mode_items(
@@ -188,13 +199,14 @@ fn overview_button_row<F: FnMut(&str)>(
     title: &str,
     code: &str,
     items: &[(&str, &str)],
+    selected_value: Option<&str>,
     mut action: F,
 ) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
         overview_row_label(ui, title, code);
         for (label, value) in items {
-            if overview_action_button(ui, code, label, value) {
+            if overview_action_button(ui, code, label, value, selected_value == Some(*value)) {
                 action(value);
             }
         }
@@ -234,7 +246,13 @@ fn overview_row_label(ui: &mut Ui, label: &str, code: &str) {
     );
 }
 
-fn overview_action_button(ui: &mut Ui, group: &str, label: &str, value: &str) -> bool {
+fn overview_action_button(
+    ui: &mut Ui,
+    group: &str,
+    label: &str,
+    value: &str,
+    selected: bool,
+) -> bool {
     let id = ui.make_persistent_id(("overview_action", group, value));
     let (rect, _) = ui.allocate_exact_size(
         vec2(OVERVIEW_ACTION_WIDTH, OVERVIEW_ACTION_HEIGHT),
@@ -249,30 +267,46 @@ fn overview_action_button(ui: &mut Ui, group: &str, label: &str, value: &str) ->
         response.is_pointer_button_down_on(),
         0.06,
     );
+    let selected_t = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with("selected"), selected, 0.16);
     let rect = rect
-        .translate(vec2(hover_t * 1.5 - press_t, press_t))
+        .translate(vec2(hover_t * 1.5 - press_t, press_t + selected_t))
         .shrink2(vec2(0.0, 1.0));
+    let active_t = hover_t.max(selected_t);
     let fill = overview_mix_color(
-        Color32::from_rgb(28, 27, 24),
-        Color32::from_rgb(67, 49, 27),
-        hover_t,
+        overview_mix_color(
+            Color32::from_rgb(28, 27, 24),
+            Color32::from_rgb(82, 58, 30),
+            selected_t,
+        ),
+        Color32::from_rgb(72, 54, 32),
+        hover_t * 0.6,
     );
     let stroke = overview_mix_color(
         Color32::from_rgb(68, 59, 45),
-        Color32::from_rgb(224, 164, 88),
-        hover_t,
+        Color32::from_rgb(232, 169, 88),
+        active_t,
     );
     let text = overview_mix_color(
         Color32::from_rgb(199, 191, 177),
         Color32::from_rgb(255, 236, 200),
-        hover_t,
+        active_t,
     );
     let painter = ui.painter_at(rect.expand(5.0));
     painter.add(Shape::convex_polygon(
         overview_action_points(rect, OVERVIEW_ACTION_SKEW).to_vec(),
         fill,
-        Stroke::new(1.0 + hover_t * 0.7, stroke),
+        Stroke::new(1.0 + active_t * 0.9, stroke),
     ));
+    if selected_t > 0.0 {
+        painter.add(Shape::convex_polygon(
+            overview_action_points(rect.shrink2(vec2(5.0, 5.0)), OVERVIEW_ACTION_SKEW * 0.55)
+                .to_vec(),
+            Color32::from_rgba_unmultiplied(214, 157, 92, (34.0 * selected_t) as u8),
+            Stroke::new(0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 0)),
+        ));
+    }
     painter.line_segment(
         [
             pos2(rect.left() + OVERVIEW_ACTION_SKEW + 5.0, rect.top() + 5.0),
@@ -280,7 +314,7 @@ fn overview_action_button(ui: &mut Ui, group: &str, label: &str, value: &str) ->
         ],
         Stroke::new(
             1.0,
-            Color32::from_rgba_unmultiplied(255, 229, 180, (28.0 + hover_t * 72.0) as u8),
+            Color32::from_rgba_unmultiplied(255, 229, 180, (28.0 + active_t * 82.0) as u8),
         ),
     );
     painter.line_segment(
@@ -292,8 +326,8 @@ fn overview_action_button(ui: &mut Ui, group: &str, label: &str, value: &str) ->
             pos2(rect.right() - 3.0, rect.bottom() - 5.0),
         ],
         Stroke::new(
-            1.0,
-            Color32::from_rgba_unmultiplied(214, 157, 92, (90.0 + hover_t * 110.0) as u8),
+            1.0 + selected_t,
+            Color32::from_rgba_unmultiplied(214, 157, 92, (90.0 + active_t * 130.0) as u8),
         ),
     );
     painter.text(

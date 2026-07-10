@@ -73,6 +73,8 @@ pub struct DchuConfig {
     #[serde(default)]
     pub fanq: Option<u8>,
     #[serde(default)]
+    pub mode_status: Option<u8>,
+    #[serde(default)]
     pub kbtp: Option<u8>,
     #[serde(default)]
     pub psf1: Option<u32>,
@@ -241,6 +243,7 @@ pub fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> {
 
     config.raw_config = parse_hex_bytes(&hex_lines.join(" "))?;
     config.fanq = config.raw_config.get(0x0c).copied();
+    config.mode_status = config.raw_config.get(0x0e).copied();
     config.kbtp = config.raw_config.get(0x0f).copied();
     Ok(config)
 }
@@ -329,6 +332,32 @@ pub fn available_fan_modes(snapshot: Option<&HardwareSnapshot>) -> &'static [Fan
         &CONFIGURED_FAN_MODES
     } else {
         &SAFE_FAN_MODES
+    }
+}
+
+pub fn selected_fan_mode_from_snapshot(
+    snapshot: Option<&HardwareSnapshot>,
+) -> Option<&'static str> {
+    match snapshot
+        .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        .and_then(|config| config.mode_status)
+    {
+        Some(0x08) => Some("silent"),
+        Some(0x10) => Some("max"),
+        _ => None,
+    }
+}
+
+pub fn selected_power_mode_from_snapshot(
+    snapshot: Option<&HardwareSnapshot>,
+) -> Option<&'static str> {
+    match snapshot
+        .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        .and_then(|config| config.mode_status)
+    {
+        Some(0x80) => Some("0"),
+        Some(0x08) => Some("2"),
+        _ => None,
     }
 }
 
@@ -565,6 +594,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.fanq, Some(0x02));
+        assert_eq!(config.mode_status, Some(0x00));
         assert_eq!(config.kbtp, Some(0x06));
         assert_eq!(config.psf5, Some(0x93));
         assert_eq!(config.psf1, Some(0x0468_0025));
@@ -580,6 +610,62 @@ mod tests {
         assert!(parse_power_mode("4").is_err());
         assert!(parse_power_mode("0x2").is_err());
         assert!(parse_power_mode("raw-data").is_err());
+    }
+
+    #[test]
+    fn selects_only_unambiguous_ec_fan_modes() {
+        let mut snapshot = HardwareSnapshot::from_status_bytes(&[]);
+        snapshot.dchu_config = Some(DchuConfig {
+            mode_status: Some(0x10),
+            ..DchuConfig::default()
+        });
+        assert_eq!(
+            selected_fan_mode_from_snapshot(Some(&snapshot)),
+            Some("max")
+        );
+
+        snapshot.dchu_config = Some(DchuConfig {
+            mode_status: Some(0x08),
+            ..DchuConfig::default()
+        });
+        assert_eq!(
+            selected_fan_mode_from_snapshot(Some(&snapshot)),
+            Some("silent")
+        );
+
+        snapshot.dchu_config = Some(DchuConfig {
+            mode_status: Some(0x02),
+            ..DchuConfig::default()
+        });
+        assert_eq!(selected_fan_mode_from_snapshot(Some(&snapshot)), None);
+    }
+
+    #[test]
+    fn selects_only_unambiguous_ec_power_modes() {
+        let mut snapshot = HardwareSnapshot::from_status_bytes(&[]);
+        snapshot.dchu_config = Some(DchuConfig {
+            mode_status: Some(0x80),
+            ..DchuConfig::default()
+        });
+        assert_eq!(
+            selected_power_mode_from_snapshot(Some(&snapshot)),
+            Some("0")
+        );
+
+        snapshot.dchu_config = Some(DchuConfig {
+            mode_status: Some(0x08),
+            ..DchuConfig::default()
+        });
+        assert_eq!(
+            selected_power_mode_from_snapshot(Some(&snapshot)),
+            Some("2")
+        );
+
+        snapshot.dchu_config = Some(DchuConfig {
+            mode_status: Some(0x02),
+            ..DchuConfig::default()
+        });
+        assert_eq!(selected_power_mode_from_snapshot(Some(&snapshot)), None);
     }
 
     #[test]
