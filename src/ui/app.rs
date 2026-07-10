@@ -17,6 +17,8 @@ use crate::settings::{
     load_hardware_snapshot, load_settings, Settings,
 };
 
+const BODY_HORIZONTAL_MARGIN: f32 = 12.0;
+
 pub struct ClevoLedApp {
     writer: LedWriter,
     settings_path: PathBuf,
@@ -342,7 +344,7 @@ impl eframe::App for ClevoLedApp {
                 ui.vertical(|ui| {
                     custom_title_bar(ui, ctx);
                     ui.add_space(8.0);
-                    layout::control_center(ui, self);
+                    body_frame(ui, |ui| layout::control_center(ui, self));
                 });
             });
 
@@ -353,6 +355,16 @@ impl eframe::App for ClevoLedApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.persist_settings_if_due(true);
     }
+}
+
+fn body_frame(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
+    Frame::none()
+        .inner_margin(body_margin())
+        .show(ui, add_contents);
+}
+
+fn body_margin() -> egui::Margin {
+    egui::Margin::symmetric(BODY_HORIZONTAL_MARGIN, 0.0)
 }
 
 fn custom_title_bar(ui: &mut Ui, ctx: &Context) {
@@ -400,5 +412,19 @@ fn custom_title_bar(ui: &mut Ui, ctx: &Context) {
         ctx.send_viewport_cmd(ViewportCommand::Close);
     } else if drag_response.drag_started() && !close_response.hovered() {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn body_margin_only_adds_horizontal_padding() {
+        let margin = body_margin();
+        assert_eq!(margin.left, 12.0);
+        assert_eq!(margin.right, 12.0);
+        assert_eq!(margin.top, 0.0);
+        assert_eq!(margin.bottom, 0.0);
     }
 }
