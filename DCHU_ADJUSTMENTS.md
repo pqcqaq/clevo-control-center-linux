@@ -10,14 +10,15 @@
 | 读取配置/能力 | `/proc/clevo_dchu_config` | 只读；返回 DCHU 0x0D 配置 buffer、`FANQ`/`KBTP` 和 `PSF1/PSF2/PSF4/PSF5` 能力整数。 |
 | 键盘 RGB | GUI / `/proc/clevo_control_center_led` | 颜色必须是 6 位十六进制；显式分区只允许 `f0..f6`；不写分区时只写默认三分区。 |
 | 电源/性能档位 | `clevo-control-center dchu power-mode <0..3> --i-understand` / `/proc/clevo_dchu_control` | 只允许十进制 `0..3`。 |
-| 风扇模式 | `clevo-control-center dchu fan-mode <mode> --i-understand` / `/proc/clevo_dchu_control` | 只允许 `auto/max/silent/maxq/custom` 或数字 `0/1/2/5/6`。 |
+| 风扇模式 | `clevo-control-center dchu fan-mode <mode> --i-understand` / `/proc/clevo_dchu_control` | 只允许 `auto/max/silent/maxq/custom` 或数字 `0/1/3/5/6`。 |
 
 `/proc/clevo_dchu_control` 只接受两个命令：`fan-mode <value>` 和 `power-mode <value>`。额外参数、未知命令、越界数字都会被内核模块拒绝。
 
 ## 已确认映射
 
 - `power-mode 0..3` 参考 opencontrol，对应 `Quiet/Powersaving/Performance/Entertainment`。
-- `fan-mode` 以本机 DSDT `SCMD(0x79)` 为准：`sub=1` 时有效处理 `0=auto`、`1=max`、`2=silent`、`5=maxq`、`6=custom`。`3/4` 是空操作，`7` 没有处理分支，因此不作为公开能力展示。
+- `fan-mode` 以原厂 Control Center 3.0 静态分析为准：`sub=1` 时公开 `0=auto`、`1=max`、`3=silent`、`5=maxq`、`6=custom`。旧实现把 silent 写成 `2`，这是错误值。
+- 原厂 UI 选中态不来自 `0x0D[0x0E]`，而是 `ReadAppSettings(1,1,1)` 读电源模式、`ReadAppSettings(4,5,1)` 读风扇模式；当前 Linux 模块不伪装这个 Windows AcpiBridge AppSettings 存储。
 - `status` 读取固件状态后解析当前 GUI 需要展示的 CPU/GPU 风扇转速和温度；风扇 raw tach 使用 `2156220 / raw_tach` 换算为 RPM，第三路 tach 非 0 时按 PCH 风扇显示；温度块按 `0x10..0x15` 展示，已确认的 CPU/GPU 字段直接显示为单字节摄氏度值，未知字段按 offset 展示。
 - 左侧“高级”页面只读展示三类数据：风扇 raw/解析值、温度块、其他非零字段和完整 DCHU 0x0C raw buffer；不增加新的写入入口。
 

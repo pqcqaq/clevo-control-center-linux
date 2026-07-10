@@ -181,7 +181,7 @@ echo 'fan-mode silent' > /proc/clevo_dchu_control
 echo 'power-mode 2' > /proc/clevo_dchu_control
 ```
 
-`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|0|1|2|5|6>` 和 `power-mode <0..3>`。当前机器 DSDT 中 `fan-mode 3` 是空操作，`fan-mode 7` 没有处理分支，所以不再公开为有效模式。其他命令、额外参数和越界值会被内核模块拒绝。
+`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6>` 和 `power-mode <0..3>`。原厂 Control Center 3.0 使用 `3` 作为静音风扇模式值；旧的 `2` 不再公开为有效模式。其他命令、额外参数和越界值会被内核模块拒绝。
 
 ## DCHU CLI
 

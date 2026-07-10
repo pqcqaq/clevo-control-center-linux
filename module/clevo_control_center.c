@@ -255,7 +255,7 @@ static int parse_fan_mode_name(const char *value, u32 *mode)
 	} else if (!strcmp(value, "max")) {
 		*mode = 1;
 	} else if (!strcmp(value, "silent")) {
-		*mode = 2;
+		*mode = 3;
 	} else if (!strcmp(value, "maxq")) {
 		*mode = 5;
 	} else if (!strcmp(value, "custom")) {
@@ -280,7 +280,7 @@ static int clevo_dchu_set_fan_mode(const char *value)
 	switch (mode) {
 	case 0:
 	case 1:
-	case 2:
+	case 3:
 	case 5:
 	case 6:
 		break;

@@ -48,18 +48,20 @@ print(f"0x{data[0x0E]:02x}")
 PY
 }
 
-selected_power() {
+power_raw_hint() {
   case "$1" in
-    0x80) printf "0" ;;
-    0x08) printf "2" ;;
+    0x80) printf "power0" ;;
+    0x08) printf "power2/old-fan2" ;;
+    0x02) printf "power1-or-3/maxq" ;;
     *) printf "none" ;;
   esac
 }
 
-selected_fan() {
+fan_raw_hint() {
   case "$1" in
-    0x10) printf "max" ;;
-    0x08) printf "silent" ;;
+    0x10) printf "fan-max" ;;
+    0x08) printf "power2/old-fan2" ;;
+    0x02) printf "power1-or-3/maxq" ;;
     *) printf "none" ;;
   esac
 }
@@ -110,8 +112,8 @@ probe_action() {
   sleep "$DELAY_SECONDS"
 
   before_raw="$(read_mode_status)"
-  before_power="$(selected_power "$before_raw")"
-  before_fan="$(selected_fan "$before_raw")"
+  before_power="$(power_raw_hint "$before_raw")"
+  before_fan="$(fan_raw_hint "$before_raw")"
 
   if [[ "$status" == "ok" ]]; then
     if ! output="$(run_write "$group" "$value" 2>&1)"; then
@@ -123,8 +125,8 @@ probe_action() {
   sleep "$DELAY_SECONDS"
 
   after_raw="$(read_mode_status)"
-  after_power="$(selected_power "$after_raw")"
-  after_fan="$(selected_fan "$after_raw")"
+  after_power="$(power_raw_hint "$after_raw")"
+  after_fan="$(fan_raw_hint "$after_raw")"
   print_row "$baseline" "$action" "$before_raw" "$before_power" "$before_fan" \
     "$after_raw" "$after_power" "$after_fan" "$status"
 }
@@ -135,8 +137,9 @@ echo "Config: $CONFIG_PATH"
 echo "Delay: ${DELAY_SECONDS}s"
 echo
 echo "Power actions use fan:max as the baseline. Fan actions use power:0 as the baseline."
+echo "Raw hints are only labels for config_0d[0x0E]; OEM UI selected state comes from AppSettings, not this byte."
 echo
-echo "| baseline | action | raw before | power before | fan before | raw after | power after | fan after | power selected change | fan selected change | command |"
+echo "| baseline | action | raw before | power hint before | fan hint before | raw after | power hint after | fan hint after | power hint change | fan hint change | command |"
 echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 
 for value in 0 1 2 3; do

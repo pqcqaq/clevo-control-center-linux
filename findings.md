@@ -123,13 +123,31 @@
   - `power:2 -> 0x08`
   - `power:3 -> 0x02`
   - `fan:max -> 0x10`
-  - `fan:silent -> 0x08`
+  - `fan:silent` 旧实现错误值 `2 -> 0x08`
   - `fan:maxq -> 0x02`
   - `fan:auto` 在 `power:0` 基线下保持 `0x80`，在 `0x02` 基线下保持 `0x02`
-- 同次隔离测试的 UI 选中推导结果：
-  - 以 `fan:max` 为基线，写 `power:0/1/2/3` 都会让风扇选中从 `max` 变为 `none/silent/none` 等状态，说明电源写入会影响风扇选中读回。
-  - 以 `power:0` 为基线，写 `fan:max/silent/maxq` 会让电源选中从 `0` 变为 `none/2/none`，说明风扇写入会影响电源选中读回。
-  - `0x08` 同时对应当前 UI 规则里的 `power:2` 和 `fan:silent`，不能同时作为两个按钮组的可靠选中依据。
+- 同次隔离测试的旧 UI 选中推导结果：
+  - 以 `fan:max` 为基线，写 `power:0/1/2/3` 都会让旧风扇推导从 `max` 变为 `none/power2-or-old-fan2/none` 等状态，说明电源写入会影响该字段。
+  - 以 `power:0` 为基线，写 `fan:max/silent/maxq` 会让旧电源推导从 `0` 变为 `none/power2-or-old-fan2/none`，说明风扇写入也会影响该字段。
+  - `0x08` 同时对应旧规则里的 `power:2` 和旧实现错误风扇值 `2`，不能同时作为两个按钮组的可靠选中依据。
   - `0x02` 也不能区分 `power:1`、`power:3`、`fan:maxq`、部分 `fan:auto` 场景。
   - 结论：在找到独立 EC 状态位之前，GUI 不应仅靠 `0x0D[0x0E]` 同时高亮电源模式和风扇模式；最多只能把该字段作为高级调试信息或单组临时回读。
 - 后续如果要实现风扇/电源功能，建议先做只读 CLI/debug 接口展示 `0x0C/0x0D`，写接口必须二次确认并加显式风险开关，不应直接放进 GUI 默认功能。
+
+## 原厂 Control Center 3.0 静态分析追加发现
+- 原厂包路径：`D:\07_ControlCenter`，InstallShield 包显示为 `ControlCenter 3.0 Package v3.97`。仅做静态解包和反编译，未运行安装程序或原厂可执行程序。
+- `FanSpeedSetting` 中风扇按钮写入链路：
+  - `RB_FAN_auto_Click -> SetFanMode(0)`
+  - `RB_FAN_max_Click -> SetFanMode(1)`
+  - `RB_FAN_Silent_Click -> SetFanMode(3)`
+  - `RB_FAN_Maxq_Click -> SetFanMode(5)`
+  - `FAN.SetFanMode` 先 `SetWMI(121, 1, mode)`，再 `SetAPPData(4, 5, 1, [mode])`。
+- `FnKey` 中电源模式 enum 为 `0=quiet`、`1=pwrsaving`、`2=performance`、`3=entertainment`。`Features.SetPowerMode(mode)` 先 `WriteAppSettings(1, 1, 1, [mode])`，再写硬件：
+  - 普通路径：`SetWMI(121, 25, mode)`，也就是 `SCMD(0x79)` 的 `sub=0x19`。
+  - `mode == 2` 时会按 DTT/turbo 标志 OR 上 `0x80` 或 `0x40` 后再写 `SetWMI(121, 25, value)`。
+- 原厂 UI 的“当前选中”不读 `0x0D[0x0E]`：
+  - 电源模式读 `ReadAppSettings(1, 1, 1)`。
+  - 风扇模式读 `ReadAppSettings(4, 5, 1)`。
+  - turbo fan 状态读 `ReadAppSettings(4, 8, 1)`。
+- 反汇编 `InsydeDCHU.dll` 确认 `ReadAppSettings/WriteAppSettings` 走 Windows `AcpiBridge` 设备的另一路 IOCTL `0x32240c`，读写 0x1000 字节的 AppSettings 区；这不是当前 Linux `_DSM` 直接读到的 `0x0C/0x0D` EC buffer。
+- 因此 Linux GUI 不应把 `0x0D[0x0E]` 当作电源/风扇选中态。除非后续可靠复刻 AppSettings 通道，否则只能展示写入按钮，不做虚假的硬件读回高亮。
