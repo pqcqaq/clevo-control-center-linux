@@ -431,10 +431,11 @@
 - 写 `fan-mode` 按官方顺序：先写硬件 `SCMD(0x79, sub=1)`，成功后同步 AppSettings 兼容字段 `4:5`。
 - 写 `power-mode` 按官方读回语义：先更新 AppSettings 兼容字段 `1:1`，再写硬件 `SCMD(0x79, sub=0x19)`；硬件失败则回滚兼容字段，避免 UI 显示未生效状态。
 - GUI 按钮高亮只读 `app_power_mode/app_fan_mode`，不再使用 `mode_status` 推导。
+- GUI 的“风扇”页面可以编辑三组本地 CPU/GPU 曲线；首页/性能页显示的 `曲线 1/2/3` 只是本地配置选择，不调用 `SetWMIPackage(14)`，也不写 AppSettings 风扇表镜像。
 
 ### 仍未完全确认的点
 - Windows 原厂完整 AppSettings 存储由 AcpiBridge IOCTL `0x32240c` 管理；Linux 目前没有确认同等持久存储位置，因此受限 AppSettings 是运行时兼容镜像。
 - CPU 温度的 `CalCPUTemp(TDP, raw)` 修正尚未完整复刻；当前只展示 EC raw 摄氏度候选。
-- Linux GUI 已把当前可安全使用的 OEM 能力位映射为 UI 可见性规则：`PSF5 bit0` 控制电源模式按钮组，`PSF5 bit7` 控制风扇模式按钮组，`PSF2 bit15` 控制 Silent，`0x0D[0x0E] == 5` 控制 MaxQ。MUX、风扇曲线、GPU/CPU OC、电池策略等仍只在高级页按能力位只读展示。
+- Linux GUI 已把当前可安全使用的 OEM 能力位映射为 UI 可见性规则：`PSF5 bit0` 控制电源模式按钮组，`PSF5 bit7` 控制风扇模式按钮组，`PSF2 bit15` 控制 Silent，`0x0D[0x0E] == 5` 控制 MaxQ。风扇曲线当前只有本地编辑和本地选择；MUX、GPU/CPU OC、电池策略等仍只在高级页按能力位只读展示。
 - MUX、风扇曲线、GPU OC、CPU OC、电池节能、AntiDust 等高级写入虽然已有静态链路，但尚未做 Linux 实机逐项验证和失败恢复设计；暂不公开写入口。
 - InstallShield 未解包服务组件可能包含 FnKey/PowerBiosServer 的最终电源落地逻辑；当前结论基于已解包 AppX、DLL 反汇编和 Linux 实机验证。

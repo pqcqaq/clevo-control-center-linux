@@ -106,6 +106,7 @@ impl Mode {
 pub enum ControlPage {
     Overview,
     Lighting,
+    Fan,
     Performance,
     Diagnostics,
     Settings,
@@ -117,6 +118,7 @@ impl ControlPage {
         match self {
             Self::Overview => "总览",
             Self::Lighting => "灯光",
+            Self::Fan => "风扇",
             Self::Performance => "性能",
             Self::Diagnostics => "诊断",
             Self::Settings => "设置",
@@ -128,6 +130,7 @@ impl ControlPage {
         &[
             Self::Overview,
             Self::Lighting,
+            Self::Fan,
             Self::Performance,
             Self::Diagnostics,
             Self::Settings,
@@ -183,6 +186,16 @@ pub fn normalize_zones(zones: &[ZoneId]) -> Vec<ZoneId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fan_page_is_between_lighting_and_performance() {
+        let pages = ControlPage::all();
+        let lighting_index = pages
+            .iter()
+            .position(|page| *page == ControlPage::Lighting)
+            .unwrap();
+        assert_eq!(pages.get(lighting_index + 1), Some(&ControlPage::Fan));
+    }
 
     #[test]
     fn advanced_page_is_after_settings() {

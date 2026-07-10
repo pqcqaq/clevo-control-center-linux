@@ -3,15 +3,16 @@ use eframe::egui::{
     Shape, Slider, Stroke, Ui,
 };
 
-use super::advanced;
 use super::app::ClevoLedApp;
 use super::widgets::{
     color_swatch, command_panel, control_group, fan_gauge, hardware_details, page_header,
 };
+use super::{advanced, fan};
 use crate::dchu::{
     available_fan_modes, available_power_modes, selected_fan_mode_from_snapshot,
     selected_power_mode_from_snapshot, FanStatus, HardwareSnapshot,
 };
+use crate::fan_curve::{FanCurveSettings, FAN_CURVE_COUNT};
 use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
 const GAUGE_GAP: f32 = 8.0;
@@ -27,6 +28,7 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     match app.active_page {
         ControlPage::Overview => overview_page(ui, app),
         ControlPage::Lighting => lighting_page(ui, app),
+        ControlPage::Fan => fan::fan_page(ui, app),
         ControlPage::Performance => performance_page(ui, app),
         ControlPage::Diagnostics => diagnostics_page(ui, app),
         ControlPage::Settings => settings_page(ui, app),
@@ -163,8 +165,8 @@ fn overview_gauge_leading_space(available_width: f32, row_width: f32) -> f32 {
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
     let power_modes = overview_power_mode_items(app.hardware.as_ref());
     let selected_power_mode = selected_power_mode_from_snapshot(app.hardware.as_ref());
-    let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
-    let selected_fan_mode = selected_fan_mode_from_snapshot(app.hardware.as_ref());
+    let fan_modes = overview_fan_mode_items(app);
+    let selected_fan_mode = selected_fan_mode_value(app);
 
     if !power_modes.is_empty() {
         overview_button_row(
@@ -190,7 +192,7 @@ fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
             "FAN",
             &fan_modes,
             selected_fan_mode,
-            |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
+            |mode| apply_fan_mode_selection(app, mode),
         );
     }
 
@@ -212,13 +214,39 @@ fn overview_power_mode_items(
         .collect()
 }
 
-fn overview_fan_mode_items(
-    snapshot: Option<&HardwareSnapshot>,
-) -> Vec<(&'static str, &'static str)> {
-    available_fan_modes(snapshot)
+fn overview_fan_mode_items(app: &ClevoLedApp) -> Vec<(&'static str, &'static str)> {
+    let mut modes = available_fan_modes(app.hardware.as_ref())
         .iter()
         .map(|mode| (mode.label, mode.value))
-        .collect()
+        .collect::<Vec<_>>();
+
+    if app.fan_curves.enabled {
+        modes.extend((0..FAN_CURVE_COUNT).map(|index| {
+            (
+                FanCurveSettings::profile_label(index),
+                FanCurveSettings::mode_value(index),
+            )
+        }));
+    }
+    modes
+}
+
+fn selected_fan_mode_value(app: &ClevoLedApp) -> Option<&'static str> {
+    if app.fan_curves.enabled {
+        if let Some(index) = app.fan_curves.selected_profile {
+            return Some(FanCurveSettings::mode_value(index));
+        }
+    }
+    selected_fan_mode_from_snapshot(app.hardware.as_ref())
+}
+
+fn apply_fan_mode_selection(app: &mut ClevoLedApp, value: &str) {
+    if let Some(index) = FanCurveSettings::mode_index(value) {
+        app.select_fan_curve_profile(index);
+    } else {
+        app.clear_selected_fan_curve_profile();
+        app.run_dchu_write(&["fan-mode", value, "--i-understand"]);
+    }
 }
 
 fn overview_button_row<F: FnMut(&str)>(
@@ -623,7 +651,7 @@ fn lighting_slider(ui: &mut Ui, label: &str, value: &mut u8, enabled: bool) {
 fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     page_header(ui, "性能", "DCHU 电源档位和风扇策略");
     let power_modes = overview_power_mode_items(app.hardware.as_ref());
-    let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
+    let fan_modes = overview_fan_mode_items(app);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
         if !power_modes.is_empty() {
@@ -642,9 +670,9 @@ fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
                 ui,
                 "风扇模式",
                 &fan_modes,
-                selected_fan_mode_from_snapshot(app.hardware.as_ref()),
+                selected_fan_mode_value(app),
                 |mode| {
-                    app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
+                    apply_fan_mode_selection(app, mode);
                 },
             );
         }

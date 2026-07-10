@@ -145,7 +145,7 @@ mod tests {
             running: true,
             f0_color: Rgb::WHITE,
             zones: default_zones(),
-            window_pos: None,
+            ..Settings::default()
         };
 
         let colors = colors_for_mode(Mode::Chase, 0.0, &settings);
@@ -165,7 +165,7 @@ mod tests {
             running: true,
             f0_color: Rgb::WHITE,
             zones: vec![ZoneId::F0, ZoneId::F4, ZoneId::F6],
-            window_pos: None,
+            ..Settings::default()
         };
 
         let zones = colors_for_mode(Mode::Cycle, 0.0, &settings)

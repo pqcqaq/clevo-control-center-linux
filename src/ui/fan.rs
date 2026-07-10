@@ -1,0 +1,402 @@
+use eframe::egui::{
+    self, pos2, vec2, Align2, Button, Color32, DragValue, FontId, Frame, Pos2, Rect, RichText,
+    Sense, Shape, Stroke, Ui,
+};
+
+use super::app::ClevoLedApp;
+use super::widgets::page_header;
+use crate::fan_curve::{
+    FanCurve, FanCurveChannel, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
+    FAN_CURVE_MAX_DUTY, FAN_CURVE_MAX_TEMP, FAN_CURVE_MIN_DUTY, FAN_CURVE_MIN_TEMP,
+};
+
+const CURVE_PANEL_HEIGHT: f32 = 236.0;
+
+pub(super) fn fan_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    page_header(ui, "风扇", "本地自定义曲线配置；当前版本不写入 EC 风扇表");
+
+    Frame::none()
+        .fill(Color32::from_rgb(35, 34, 30))
+        .rounding(12.0)
+        .inner_margin(egui::Margin::same(14.0))
+        .show(ui, |ui| {
+            fan_curve_switch(ui, app);
+            if app.fan_curve_draft.enabled {
+                ui.add_space(14.0);
+                fan_curve_tabs(ui, app);
+                ui.add_space(12.0);
+                fan_curve_editor(ui, app);
+                ui.add_space(14.0);
+                fan_curve_actions(ui, app);
+            } else {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new("自定义风扇曲线未开启；首页不会显示曲线 1/2/3。")
+                        .size(13.0)
+                        .color(Color32::from_rgb(151, 145, 135)),
+                );
+            }
+        });
+}
+
+fn fan_curve_switch(ui: &mut Ui, app: &mut ClevoLedApp) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
+        if switch(ui, app.fan_curve_draft.enabled) {
+            app.set_fan_curve_enabled(!app.fan_curve_draft.enabled);
+        }
+        ui.label(
+            RichText::new("开启自定义风扇曲线")
+                .size(15.0)
+                .strong()
+                .color(Color32::from_rgb(236, 230, 218)),
+        );
+        ui.label(
+            RichText::new("仅保存到本地配置；首页选择曲线后会记录 CPU/GPU 曲线意图，不直接写 EC。")
+                .size(12.0)
+                .color(Color32::from_rgb(151, 145, 135)),
+        );
+    });
+}
+
+fn switch(ui: &mut Ui, enabled: bool) -> bool {
+    let desired_size = vec2(48.0, 24.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with("switch"), enabled, 0.14);
+    let hover_t =
+        ui.ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+    let fill = mix_color(
+        Color32::from_rgb(49, 45, 37),
+        Color32::from_rgb(138, 88, 33),
+        t,
+    );
+    let stroke = mix_color(
+        Color32::from_rgb(72, 64, 52),
+        Color32::from_rgb(235, 168, 80),
+        t.max(hover_t * 0.5),
+    );
+    let painter = ui.painter_at(rect.expand(3.0));
+    painter.rect_filled(rect, 12.0, fill);
+    painter.rect_stroke(rect, 12.0, Stroke::new(1.0 + hover_t * 0.5, stroke));
+    let knob_x = rect.left() + 12.0 + (rect.width() - 24.0) * t;
+    painter.circle_filled(
+        pos2(knob_x, rect.center().y),
+        8.0,
+        Color32::from_rgb(239, 228, 207),
+    );
+    painter.circle_stroke(
+        pos2(knob_x, rect.center().y),
+        8.0,
+        Stroke::new(1.0, Color32::from_rgb(34, 30, 25)),
+    );
+    response.clicked()
+}
+
+fn fan_curve_tabs(ui: &mut Ui, app: &mut ClevoLedApp) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        for index in 0..FAN_CURVE_COUNT {
+            let selected = app.fan_curve_tab == index;
+            let fill = if selected {
+                Color32::from_rgb(74, 52, 27)
+            } else {
+                Color32::from_rgb(27, 26, 23)
+            };
+            let stroke = if selected {
+                Stroke::new(1.2, Color32::from_rgb(226, 166, 88))
+            } else {
+                Stroke::new(1.0, Color32::from_rgb(64, 58, 48))
+            };
+            if ui
+                .add_sized(
+                    vec2(104.0, 32.0),
+                    Button::new(FanCurveSettings::profile_label(index))
+                        .fill(fill)
+                        .stroke(stroke),
+                )
+                .clicked()
+            {
+                app.fan_curve_tab = index;
+                app.fan_curve_selection = None;
+            }
+        }
+    });
+}
+
+fn fan_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp) {
+    if app.fan_curve_tab >= app.fan_curve_draft.profiles.len() {
+        return;
+    }
+
+    let width = ((ui.available_width() - 12.0) * 0.5).max(260.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+        curve_card(ui, app, FanCurveChannel::Cpu, width);
+        curve_card(ui, app, FanCurveChannel::Gpu, width);
+    });
+
+    if let Some(selection) = app.fan_curve_selection {
+        if selection.profile == app.fan_curve_tab {
+            ui.add_space(12.0);
+            selected_point_editor(ui, app, selection);
+        }
+    }
+}
+
+fn curve_card(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, width: f32) {
+    Frame::none()
+        .fill(Color32::from_rgb(26, 25, 22))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(57, 51, 42)))
+        .rounding(10.0)
+        .inner_margin(egui::Margin::same(12.0))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.label(
+                RichText::new(channel.label())
+                    .size(14.0)
+                    .strong()
+                    .color(Color32::from_rgb(232, 224, 210)),
+            );
+            ui.add_space(8.0);
+            let (rect, _) =
+                ui.allocate_exact_size(vec2(width - 24.0, CURVE_PANEL_HEIGHT), Sense::hover());
+            draw_curve_editor(ui, app, channel, rect);
+        });
+}
+
+fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, rect: Rect) {
+    let profile_index = app.fan_curve_tab;
+    let points = channel_curve_mut(app, channel).points.clone();
+    let painter = ui.painter_at(rect);
+    let plot = rect.shrink2(vec2(26.0, 22.0));
+    draw_curve_background(&painter, rect, plot);
+
+    let screen_points = points
+        .iter()
+        .map(|point| curve_point_to_pos(plot, point.temp_celsius, point.duty_percent))
+        .collect::<Vec<_>>();
+    painter.add(Shape::line(
+        screen_points.clone(),
+        Stroke::new(2.4, Color32::from_rgb(229, 164, 86)),
+    ));
+
+    for (index, point_pos) in screen_points.iter().enumerate() {
+        let selected = app.fan_curve_selection
+            == Some(FanCurveSelection {
+                profile: profile_index,
+                channel,
+                point: index,
+            });
+        let point_rect = Rect::from_center_size(*point_pos, vec2(18.0, 18.0));
+        let id = ui.make_persistent_id(("fan_curve_point", profile_index, channel, index));
+        let response = ui.interact(point_rect, id, Sense::click_and_drag());
+        if response.clicked() {
+            app.fan_curve_selection = Some(FanCurveSelection {
+                profile: profile_index,
+                channel,
+                point: index,
+            });
+        }
+        if response.dragged() {
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let (temp, duty) = pos_to_curve_point(plot, pointer);
+                channel_curve_mut(app, channel).set_point(index, temp, duty);
+                app.fan_curve_selection = Some(FanCurveSelection {
+                    profile: profile_index,
+                    channel,
+                    point: index,
+                });
+            }
+        }
+
+        let radius = if selected { 6.5 } else { 5.0 };
+        painter.circle_filled(*point_pos, radius + 3.0, Color32::from_rgb(14, 13, 12));
+        painter.circle_filled(
+            *point_pos,
+            radius,
+            if selected {
+                Color32::from_rgb(255, 206, 132)
+            } else {
+                Color32::from_rgb(198, 143, 80)
+            },
+        );
+    }
+}
+
+fn draw_curve_background(painter: &egui::Painter, rect: Rect, plot: Rect) {
+    painter.rect_filled(rect, 8.0, Color32::from_rgb(18, 17, 15));
+    painter.rect_stroke(plot, 4.0, Stroke::new(1.0, Color32::from_rgb(64, 58, 48)));
+    for step in 0..=4 {
+        let x = plot.left() + plot.width() * step as f32 / 4.0;
+        painter.line_segment(
+            [pos2(x, plot.top()), pos2(x, plot.bottom())],
+            Stroke::new(1.0, Color32::from_rgb(37, 34, 29)),
+        );
+        let y = plot.top() + plot.height() * step as f32 / 4.0;
+        painter.line_segment(
+            [pos2(plot.left(), y), pos2(plot.right(), y)],
+            Stroke::new(1.0, Color32::from_rgb(37, 34, 29)),
+        );
+    }
+
+    painter.text(
+        pos2(plot.left(), rect.bottom() - 5.0),
+        Align2::LEFT_BOTTOM,
+        format!("{FAN_CURVE_MIN_TEMP}°C"),
+        FontId::proportional(10.0),
+        Color32::from_rgb(128, 120, 108),
+    );
+    painter.text(
+        pos2(plot.right(), rect.bottom() - 5.0),
+        Align2::RIGHT_BOTTOM,
+        format!("{FAN_CURVE_MAX_TEMP}°C"),
+        FontId::proportional(10.0),
+        Color32::from_rgb(128, 120, 108),
+    );
+    painter.text(
+        pos2(rect.left() + 2.0, plot.top()),
+        Align2::LEFT_TOP,
+        "100%",
+        FontId::proportional(10.0),
+        Color32::from_rgb(128, 120, 108),
+    );
+    painter.text(
+        pos2(rect.left() + 2.0, plot.bottom()),
+        Align2::LEFT_BOTTOM,
+        "0%",
+        FontId::proportional(10.0),
+        Color32::from_rgb(128, 120, 108),
+    );
+}
+
+fn selected_point_editor(ui: &mut Ui, app: &mut ClevoLedApp, selection: FanCurveSelection) {
+    let Some(point) = channel_curve_mut(app, selection.channel)
+        .points
+        .get(selection.point)
+        .copied()
+    else {
+        return;
+    };
+
+    let mut temp = point.temp_celsius;
+    let mut duty = point.duty_percent;
+    Frame::none()
+        .fill(Color32::from_rgb(26, 25, 22))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(57, 51, 42)))
+        .rounding(10.0)
+        .inner_margin(egui::Margin::same(12.0))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{} 点 {}",
+                        selection.channel.label(),
+                        selection.point + 1
+                    ))
+                    .size(13.0)
+                    .strong()
+                    .color(Color32::from_rgb(222, 214, 199)),
+                );
+                ui.label("温度");
+                let temp_changed = ui
+                    .add(DragValue::new(&mut temp).range(FAN_CURVE_MIN_TEMP..=FAN_CURVE_MAX_TEMP))
+                    .changed();
+                ui.label("°C");
+                ui.label("占空比");
+                let duty_changed = ui
+                    .add(DragValue::new(&mut duty).range(FAN_CURVE_MIN_DUTY..=FAN_CURVE_MAX_DUTY))
+                    .changed();
+                ui.label("%");
+                if temp_changed || duty_changed {
+                    channel_curve_mut(app, selection.channel).set_point(
+                        selection.point,
+                        temp,
+                        duty,
+                    );
+                }
+            });
+        });
+}
+
+fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
+        if ui
+            .add_sized(vec2(100.0, 34.0), Button::new("保存"))
+            .clicked()
+        {
+            app.save_fan_curve_draft();
+        }
+        if ui
+            .add_sized(vec2(100.0, 34.0), Button::new("重置"))
+            .clicked()
+        {
+            app.reset_current_fan_curve_profile();
+        }
+        if ui
+            .add_sized(vec2(100.0, 34.0), Button::new("恢复"))
+            .clicked()
+        {
+            app.restore_fan_curve_draft();
+        }
+    });
+}
+
+fn channel_curve_mut(app: &mut ClevoLedApp, channel: FanCurveChannel) -> &mut FanCurve {
+    let profile = &mut app.fan_curve_draft.profiles[app.fan_curve_tab];
+    match channel {
+        FanCurveChannel::Cpu => &mut profile.cpu,
+        FanCurveChannel::Gpu => &mut profile.gpu,
+    }
+}
+
+fn curve_point_to_pos(plot: Rect, temp_celsius: u8, duty_percent: u8) -> Pos2 {
+    let temp_t = (temp_celsius.saturating_sub(FAN_CURVE_MIN_TEMP)) as f32
+        / (FAN_CURVE_MAX_TEMP - FAN_CURVE_MIN_TEMP) as f32;
+    let duty_t = (duty_percent.saturating_sub(FAN_CURVE_MIN_DUTY)) as f32
+        / (FAN_CURVE_MAX_DUTY - FAN_CURVE_MIN_DUTY) as f32;
+    pos2(
+        plot.left() + plot.width() * temp_t.clamp(0.0, 1.0),
+        plot.bottom() - plot.height() * duty_t.clamp(0.0, 1.0),
+    )
+}
+
+fn pos_to_curve_point(plot: Rect, pos: Pos2) -> (u8, u8) {
+    let temp_t = ((pos.x - plot.left()) / plot.width()).clamp(0.0, 1.0);
+    let duty_t = ((plot.bottom() - pos.y) / plot.height()).clamp(0.0, 1.0);
+    let temp =
+        FAN_CURVE_MIN_TEMP as f32 + (FAN_CURVE_MAX_TEMP - FAN_CURVE_MIN_TEMP) as f32 * temp_t;
+    let duty =
+        FAN_CURVE_MIN_DUTY as f32 + (FAN_CURVE_MAX_DUTY - FAN_CURVE_MIN_DUTY) as f32 * duty_t;
+    (temp.round() as u8, duty.round() as u8)
+}
+
+fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+        mix(from.a(), to.a()),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curve_point_mapping_roundtrips_midpoint() {
+        let plot = Rect::from_min_max(pos2(10.0, 20.0), pos2(210.0, 120.0));
+        let pos = curve_point_to_pos(plot, 65, 50);
+        let (temp, duty) = pos_to_curve_point(plot, pos);
+
+        assert_eq!(temp, 65);
+        assert_eq!(duty, 50);
+    }
+}

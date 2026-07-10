@@ -21,7 +21,7 @@
 - `fan-mode` 以原厂 Control Center 3.0 静态分析为准：`sub=1` 时公开 `0=auto`、`1=max`、`3=silent`、`5=maxq`、`6=custom`。旧实现把 silent 写成 `2`，这是错误值。
 - 原厂 UI 选中态不来自 `0x0D[0x0E]`，而是 `ReadAppSettings(1,1,1)` 读电源模式、`ReadAppSettings(4,5,1)` 读风扇模式；Linux 模块只实现这两个字段的运行时受限兼容层，不开放完整 0x1000 AppSettings 空间，也不声称已复刻 Windows AcpiBridge 的持久 AppSettings 存储。
 - GUI 可见性按原厂能力位过滤：`PSF5 bit0` 未置位时隐藏电源模式按钮，`PSF5 bit7` 未置位时隐藏风扇模式按钮，`PSF2 bit15` 未置位时不显示 Silent，`0x0D[0x0E] != 5` 时不显示 MaxQ。
-- `FanCount > 1` 且 `0x0D[0x2B] bit1 == 0` 只能说明自定义风扇表能力存在；当前 GUI 不显示 custom 写入按钮，因为风扇曲线表写入和 AppSettings 镜像尚未实现完整闭环。
+- `FanCount > 1` 且 `0x0D[0x2B] bit1 == 0` 只能说明自定义风扇表能力存在；当前 GUI 不显示 `custom` EC 写入按钮，因为风扇曲线表写入和 AppSettings 镜像尚未实现完整闭环。GUI 的“曲线 1/2/3”只保存本地 CPU/GPU 曲线选择，不写 `/proc/clevo_dchu_control`。
 - `status` 读取固件状态后解析当前 GUI 需要展示的 CPU/GPU 风扇转速和温度；风扇 raw tach 使用 `2156220 / raw_tach` 换算为 RPM，第三路 tach 非 0 时按 PCH 风扇显示；温度块按 `0x10..0x15` 展示，已确认的 CPU/GPU 字段直接显示为单字节摄氏度值，未知字段按 offset 展示。
 - 左侧“高级”页面只读展示风扇 raw/解析值、温度块、AppSettings 模式字段、官方能力位解析、其他非零字段和完整 DCHU raw buffer；不增加新的写入入口。
 

@@ -6,6 +6,7 @@ use egui::ViewportBuilder;
 
 mod dchu;
 mod effects;
+mod fan_curve;
 mod led;
 mod model;
 mod service;

@@ -10,6 +10,9 @@ use eframe::egui::{
 
 use super::layout;
 use crate::dchu::{self, HardwareSnapshot};
+use crate::fan_curve::{
+    default_fan_curve_profiles, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
+};
 use crate::led::LedWriter;
 use crate::model::{normalize_zones, AdvancedTab, ControlPage, Mode, Rgb, ZoneColor, ZoneId};
 use crate::settings::{
@@ -36,6 +39,10 @@ pub struct ClevoLedApp {
     pub(super) running: bool,
     pub(super) f0_color: Rgb,
     pub(super) zones: Vec<ZoneId>,
+    pub(super) fan_curves: FanCurveSettings,
+    pub(super) fan_curve_draft: FanCurveSettings,
+    pub(super) fan_curve_tab: usize,
+    pub(super) fan_curve_selection: Option<FanCurveSelection>,
     pub(super) last_error: Option<String>,
     pub(super) command_output: String,
     pub(super) command_status: Option<String>,
@@ -81,6 +88,10 @@ impl ClevoLedApp {
             running: settings.running,
             f0_color: settings.f0_color,
             zones: settings.zones,
+            fan_curves: settings.fan_curves.clone(),
+            fan_curve_draft: settings.fan_curves,
+            fan_curve_tab: 0,
+            fan_curve_selection: None,
             last_error: None,
             command_output: String::new(),
             command_status: None,
@@ -120,6 +131,64 @@ impl ClevoLedApp {
         self.persist_settings_if_due(true);
         if self.mode == Mode::Custom {
             self.write_selected_color(self.f0_color);
+        }
+    }
+
+    pub(super) fn set_fan_curve_enabled(&mut self, enabled: bool) {
+        self.fan_curves.enabled = enabled;
+        self.fan_curve_draft.enabled = enabled;
+        if !enabled {
+            self.fan_curves.selected_profile = None;
+            self.fan_curve_draft.selected_profile = None;
+        }
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+    }
+
+    pub(super) fn select_fan_curve_profile(&mut self, index: usize) {
+        if !self.fan_curves.enabled || index >= FAN_CURVE_COUNT {
+            return;
+        }
+        self.fan_curves.selected_profile = Some(index);
+        self.fan_curve_draft.selected_profile = Some(index);
+        self.command_status = Some(format!(
+            "已选择 {}（本地配置，未写入 EC）",
+            FanCurveSettings::profile_label(index)
+        ));
+        self.command_output.clear();
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+    }
+
+    pub(super) fn clear_selected_fan_curve_profile(&mut self) {
+        if self.fan_curves.selected_profile.is_some() {
+            self.fan_curves.selected_profile = None;
+            self.fan_curve_draft.selected_profile = None;
+            self.mark_settings_dirty();
+            self.persist_settings_if_due(true);
+        }
+    }
+
+    pub(super) fn save_fan_curve_draft(&mut self) {
+        self.fan_curve_draft = self.fan_curve_draft.clone().sanitized();
+        self.fan_curves = self.fan_curve_draft.clone();
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+    }
+
+    pub(super) fn restore_fan_curve_draft(&mut self) {
+        self.fan_curve_draft = self.fan_curves.clone();
+        self.fan_curve_selection = None;
+    }
+
+    pub(super) fn reset_current_fan_curve_profile(&mut self) {
+        if self.fan_curve_tab >= FAN_CURVE_COUNT {
+            return;
+        }
+        let defaults = default_fan_curve_profiles();
+        if let Some(profile) = defaults.get(self.fan_curve_tab) {
+            self.fan_curve_draft.profiles[self.fan_curve_tab] = profile.clone();
+            self.fan_curve_selection = None;
         }
     }
 
@@ -235,6 +304,9 @@ impl ClevoLedApp {
         self.running = settings.running;
         self.f0_color = settings.f0_color;
         self.zones = settings.zones;
+        self.fan_curves = settings.fan_curves.clone();
+        self.fan_curve_draft = settings.fan_curves;
+        self.fan_curve_selection = None;
     }
 
     fn sync_external_settings(&mut self) {
@@ -291,6 +363,7 @@ impl ClevoLedApp {
                 running: self.running && self.mode != Mode::Custom,
                 f0_color: self.f0_color,
                 zones: self.selected_zones(),
+                fan_curves: self.fan_curves.clone(),
                 window_pos: self.window_pos,
             }
         } else {

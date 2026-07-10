@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use crate::dchu::HardwareSnapshot;
+use crate::fan_curve::FanCurveSettings;
 use crate::model::{default_zones, normalize_zones, Mode, Rgb, ZoneId};
 
 pub const APP_ID: &str = "clevo-control-center";
@@ -26,6 +27,8 @@ pub struct Settings {
     pub f0_color: Rgb,
     #[serde(default = "default_zones")]
     pub zones: Vec<ZoneId>,
+    #[serde(default)]
+    pub fan_curves: FanCurveSettings,
     pub window_pos: Option<[f32; 2]>,
 }
 
@@ -38,6 +41,7 @@ impl Default for Settings {
             running: false,
             f0_color: Rgb::WHITE,
             zones: default_zones(),
+            fan_curves: FanCurveSettings::default(),
             window_pos: None,
         }
     }
@@ -48,6 +52,7 @@ impl Settings {
         self.speed = self.speed.clamp(1, 100);
         self.brightness = self.brightness.clamp(1, 100);
         self.zones = normalize_zones(&self.zones);
+        self.fan_curves = self.fan_curves.sanitized();
         if self.mode == Mode::Custom {
             self.running = false;
         }
@@ -206,6 +211,11 @@ mod tests {
                 b: 56,
             },
             zones: vec![ZoneId::F0, ZoneId::F3, ZoneId::F6],
+            fan_curves: FanCurveSettings {
+                enabled: true,
+                selected_profile: Some(1),
+                ..FanCurveSettings::default()
+            },
             window_pos: Some([100.0, 200.0]),
         };
 
@@ -225,6 +235,8 @@ mod tests {
             }
         );
         assert_eq!(parsed.zones, vec![ZoneId::F0, ZoneId::F3, ZoneId::F6]);
+        assert!(parsed.fan_curves.enabled);
+        assert_eq!(parsed.fan_curves.selected_profile, Some(1));
         assert_eq!(parsed.window_pos, Some([100.0, 200.0]));
     }
 
@@ -237,6 +249,11 @@ mod tests {
             running: true,
             f0_color: Rgb::WHITE,
             zones: Vec::new(),
+            fan_curves: FanCurveSettings {
+                enabled: false,
+                selected_profile: Some(2),
+                ..FanCurveSettings::default()
+            },
             window_pos: Some([f32::NAN, 10.0]),
         }
         .sanitized();
@@ -245,6 +262,7 @@ mod tests {
         assert_eq!(settings.brightness, 1);
         assert!(!settings.running);
         assert_eq!(settings.zones, default_zones());
+        assert_eq!(settings.fan_curves.selected_profile, None);
         assert_eq!(settings.window_pos, None);
     }
 }
