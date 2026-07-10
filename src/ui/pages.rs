@@ -95,8 +95,6 @@ fn overview_gauge_leading_space(available_width: f32, row_width: f32) -> f32 {
 }
 
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
-    overview_lighting_mode(ui, app);
-    ui.add_space(12.0);
     overview_button_row(
         ui,
         "电源模式",
@@ -116,30 +114,6 @@ fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
         ],
         |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
     );
-}
-
-fn overview_lighting_mode(ui: &mut Ui, app: &mut ClevoLedApp) {
-    ui.horizontal(|ui| {
-        ui.set_width(ui.available_width());
-        overview_row_label(ui, "灯光效果");
-        ComboBox::from_id_salt("overview-lighting-mode")
-            .width(190.0)
-            .selected_text(app.mode.label())
-            .show_ui(ui, |ui| {
-                for mode in Mode::all() {
-                    let old_mode = app.mode;
-                    ui.selectable_value(&mut app.mode, *mode, mode.label());
-                    if app.mode != old_mode {
-                        if app.mode == Mode::Custom {
-                            app.running = false;
-                            app.write_selected_color(app.f0_color);
-                        }
-                        app.mark_settings_dirty();
-                        app.persist_settings_if_due(true);
-                    }
-                }
-            });
-    });
 }
 
 fn overview_button_row<F: FnMut(&str)>(
