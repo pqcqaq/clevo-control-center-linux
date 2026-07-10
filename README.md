@@ -22,9 +22,9 @@ ACPI 路径：
 
 `/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。左侧“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
 
-`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 会按原厂能力位决定控制项是否可见：电源模式看 `PSF5 bit0`，风扇设置看 `PSF5 bit7`，Silent 看 `PSF2 bit15`，MaxQ 看 `0x0D[0x0E] == 5`。自定义风扇表、MUX、超频、电池策略等只在“高级”页面只读展示能力，不作为写入控件公开。
+`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 会按原厂能力位决定控制项是否可见：电源模式看 `PSF5 bit0`，风扇设置看 `PSF5 bit7`，Silent 看 `PSF2 bit15`，MaxQ 看 `0x0D[0x0E] == 5`。MUX、超频、电池策略等只在“高级”页面只读展示能力，不作为写入控件公开。
 
-`/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它会按原厂顺序同步受限 AppSettings 状态，但不接受任意 DCHU function、任意 AppSettings offset 或裸数据。
+`/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode`、`power-mode` 和 `fan-curve` 命令。它会按原厂顺序同步受限 AppSettings 状态，但不接受任意 DCHU function、任意 AppSettings offset 或裸数据。
 
 ## 目录结构
 
@@ -181,9 +181,10 @@ echo 'f2 0000ff' > /proc/clevo_control_center_led
 echo 'fan-mode auto' > /proc/clevo_dchu_control
 echo 'fan-mode silent' > /proc/clevo_dchu_control
 echo 'power-mode 2' > /proc/clevo_dchu_control
+echo 'fan-curve 40:28,58:42,78:72,100:100 42:25,60:44,80:74,100:100' > /proc/clevo_dchu_control
 ```
 
-`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6>` 和 `power-mode <0..3>`。原厂 Control Center 3.0 使用 `3` 作为静音风扇模式值；旧的 `2` 不再公开为有效模式。其他命令、额外参数和越界值会被内核模块拒绝。
+`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6>`、`power-mode <0..3>` 和 `fan-curve <cpu> <gpu>`。`fan-curve` 的 CPU/GPU 参数各包含 4 个 `温度:占空比` 点，温度必须递增，占空比不能下降。原厂 Control Center 3.0 使用 `3` 作为静音风扇模式值；旧的 `2` 不再公开为有效模式。其他命令、额外参数、越界值和非法曲线会被内核模块拒绝。
 
 ## DCHU CLI
 
@@ -192,9 +193,10 @@ target/release/clevo-control-center dchu status
 target/release/clevo-control-center dchu app-settings
 target/release/clevo-control-center dchu fan-mode auto --i-understand
 target/release/clevo-control-center dchu power-mode 2 --i-understand
+target/release/clevo-control-center dchu fan-curve 40:28,58:42,78:72,100:100 42:25,60:44,80:74,100:100 --i-understand
 ```
 
-`dchu status` 读取 `/proc/clevo_dchu_status`，`dchu app-settings` 读取受限 AppSettings 模式状态，通常不需要 root。`fan-mode` 和 `power-mode` 写入 `/proc/clevo_dchu_control`，普通用户可用。CLI 不再提供裸 DCHU 调试入口。
+`dchu status` 读取 `/proc/clevo_dchu_status`，`dchu app-settings` 读取受限 AppSettings 模式状态，通常不需要 root。`fan-mode`、`power-mode` 和 `fan-curve` 写入 `/proc/clevo_dchu_control`，普通用户可用。CLI 不再提供裸 DCHU 调试入口。
 
 ## GUI 和后台服务
 
@@ -216,7 +218,7 @@ GUI 页面：
 
 自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
 
-“风扇”页中的自定义曲线当前只保存到 `settings.json`。开启后，总览页的风扇模式行会额外显示 `曲线 1/2/3`，点击后保存当前本地选择并把对应 CPU/GPU 曲线作为应用意图；当前版本不写入 EC 风扇曲线表，也不把曲线数据作为裸 payload 暴露。
+“风扇”页中的自定义曲线保存到 `settings.json`。开启后，总览页的风扇模式行会额外显示 `曲线 1/2/3`；点击某条曲线时，程序会把对应 CPU/GPU 曲线转换成受限 `fan-curve` 命令写入 EC 风扇表，并把风扇模式切到 `custom`。曲线数据只以温度/占空比点传递，不暴露 EC raw payload。
 
 “电池”页中的策略当前也只保存到 `settings.json`。页面可配置启用状态、预设、充电起止阈值和低电量相关策略意图；当前版本不写入 EC、不切换系统电源计划，也不调用原厂 Battery Saver/EnergySave 写接口。
 

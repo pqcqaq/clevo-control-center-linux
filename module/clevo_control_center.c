@@ -16,6 +16,7 @@
 #include <linux/mutex.h>
 #include <linux/proc_fs.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/uaccess.h>
 
 #define LED_PROC_NAME "clevo_control_center_led"
@@ -30,6 +31,16 @@
 #define DCHU_APP_POWER_MODE_OFFSET ((1u << 8) + 1u)
 #define DCHU_APP_FAN_MODE_OFFSET ((4u << 8) + 5u)
 #define DCHU_MAX_OUTPUT (DCHU_BUFFER_SIZE * 3 + 128)
+#define FAN_CURVE_POINTS 4
+#define FAN_CURVE_MIN_TEMP 30
+#define FAN_CURVE_MAX_TEMP 100
+#define FAN_CURVE_MIN_DUTY 0
+#define FAN_CURVE_MAX_DUTY 100
+
+struct fan_curve_point {
+	u8 temp;
+	u8 duty;
+};
 
 static const guid_t dchu_guid =
 	GUID_INIT(0x93f224e4, 0xfbdc, 0x4bbf,
@@ -358,14 +369,110 @@ static int clevo_dchu_set_power_mode(const char *value)
 	return ret;
 }
 
+static u8 fan_curve_duty_raw(u8 duty)
+{
+	return DIV_ROUND_CLOSEST((u32)duty * 255u, 100u);
+}
+
+static u16 fan_curve_slope(const struct fan_curve_point *from,
+			   const struct fan_curve_point *to)
+{
+	u32 duty_delta = to->duty - from->duty;
+	u32 temp_delta = to->temp - from->temp;
+
+	return DIV_ROUND_CLOSEST(duty_delta * 255u * 16u, 100u * temp_delta);
+}
+
+static int parse_fan_curve_points(char *value, struct fan_curve_point *points)
+{
+	char *cursor = value;
+	char *token;
+	unsigned int temp;
+	unsigned int duty;
+	char extra;
+	int index = 0;
+
+	while ((token = strsep(&cursor, ",")) != NULL) {
+		if (!*token || index >= FAN_CURVE_POINTS)
+			return -EINVAL;
+		if (sscanf(token, "%3u:%3u%c", &temp, &duty, &extra) != 2)
+			return -EINVAL;
+		if (temp < FAN_CURVE_MIN_TEMP || temp > FAN_CURVE_MAX_TEMP)
+			return -EINVAL;
+		if (duty > FAN_CURVE_MAX_DUTY)
+			return -EINVAL;
+		if (index > 0) {
+			if (temp <= points[index - 1].temp)
+				return -EINVAL;
+			if (duty < points[index - 1].duty)
+				return -EINVAL;
+		}
+		points[index].temp = (u8)temp;
+		points[index].duty = (u8)duty;
+		index++;
+	}
+
+	return index == FAN_CURVE_POINTS ? 0 : -EINVAL;
+}
+
+static void fan_curve_payload_channel(u8 *payload, int channel,
+				      const struct fan_curve_point *points)
+{
+	int point_base = 2 + channel * 4;
+	int slope_base = 14 + channel * 6;
+	u16 slope;
+
+	payload[point_base] = points[1].temp;
+	payload[point_base + 1] = fan_curve_duty_raw(points[1].duty);
+	payload[point_base + 2] = points[2].temp;
+	payload[point_base + 3] = fan_curve_duty_raw(points[2].duty);
+
+	slope = fan_curve_slope(&points[0], &points[1]);
+	payload[slope_base] = (u8)(slope >> 8);
+	payload[slope_base + 1] = (u8)slope;
+	slope = fan_curve_slope(&points[1], &points[2]);
+	payload[slope_base + 2] = (u8)(slope >> 8);
+	payload[slope_base + 3] = (u8)slope;
+	slope = fan_curve_slope(&points[2], &points[3]);
+	payload[slope_base + 4] = (u8)(slope >> 8);
+	payload[slope_base + 5] = (u8)slope;
+}
+
+static int clevo_dchu_set_fan_curve(char *cpu_value, char *gpu_value)
+{
+	struct fan_curve_point cpu[FAN_CURVE_POINTS];
+	struct fan_curve_point gpu[FAN_CURVE_POINTS];
+	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
+	int ret;
+
+	ret = parse_fan_curve_points(cpu_value, cpu);
+	if (ret)
+		return ret;
+	ret = parse_fan_curve_points(gpu_value, gpu);
+	if (ret)
+		return ret;
+
+	fan_curve_payload_channel(payload, 0, cpu);
+	fan_curve_payload_channel(payload, 1, gpu);
+	fan_curve_payload_channel(payload, 2, gpu);
+
+	ret = clevo_dchu_eval(0x0e, payload, sizeof(payload), NULL);
+	if (ret)
+		return ret;
+
+	return clevo_dchu_set_fan_mode("custom");
+}
+
 static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ubuf,
 					size_t count, loff_t *ppos)
 {
-	char buf[96];
+	char buf[160];
 	char command[24] = { 0 };
-	char value[24] = { 0 };
+	char value[48] = { 0 };
+	char value2[48] = { 0 };
 	char extra[2] = { 0 };
 	char *p;
+	int matched;
 	int ret;
 
 	if (count == 0)
@@ -377,15 +484,23 @@ static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ub
 	buf[count] = '\0';
 	p = strim(buf);
 
-	if (sscanf(p, "%23s %23s %1s", command, value, extra) != 2)
-		return -EINVAL;
+	matched = sscanf(p, "%23s %47s %47s %1s", command, value, value2, extra);
 
-	if (!strcmp(command, "fan-mode"))
+	if (!strcmp(command, "fan-mode")) {
+		if (matched != 2)
+			return -EINVAL;
 		ret = clevo_dchu_set_fan_mode(value);
-	else if (!strcmp(command, "power-mode"))
+	} else if (!strcmp(command, "power-mode")) {
+		if (matched != 2)
+			return -EINVAL;
 		ret = clevo_dchu_set_power_mode(value);
-	else
+	} else if (!strcmp(command, "fan-curve")) {
+		if (matched != 3)
+			return -EINVAL;
+		ret = clevo_dchu_set_fan_curve(value, value2);
+	} else {
 		return -EINVAL;
+	}
 
 	return ret ? ret : count;
 }
@@ -398,7 +513,8 @@ static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
 		"  echo 'fan-mode auto' > /proc/clevo_dchu_control\n"
 		"  echo 'fan-mode max' > /proc/clevo_dchu_control\n"
 		"  echo 'fan-mode silent' > /proc/clevo_dchu_control\n"
-		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n";
+		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n"
+		"  echo 'fan-curve 40:28,58:42,78:72,100:100 42:25,60:44,80:74,100:100' > /proc/clevo_dchu_control\n";
 
 	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
 }

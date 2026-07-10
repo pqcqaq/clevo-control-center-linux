@@ -152,13 +152,40 @@ impl ClevoLedApp {
         if !self.fan_curves.enabled || index >= FAN_CURVE_COUNT {
             return;
         }
+        let Some(profile) = self.fan_curves.profiles.get(index).cloned() else {
+            return;
+        };
+        let cpu_arg = match dchu::fan_curve_points_arg(&profile.cpu) {
+            Ok(value) => value,
+            Err(err) => {
+                self.command_status = Some("自定义曲线无效".to_owned());
+                self.command_output = err;
+                return;
+            }
+        };
+        let gpu_arg = match dchu::fan_curve_points_arg(&profile.gpu) {
+            Ok(value) => value,
+            Err(err) => {
+                self.command_status = Some("自定义曲线无效".to_owned());
+                self.command_output = err;
+                return;
+            }
+        };
+
+        let applied = self.run_dchu_command(&[
+            "dchu".to_owned(),
+            "fan-curve".to_owned(),
+            cpu_arg,
+            gpu_arg,
+            "--i-understand".to_owned(),
+        ]);
+        if !applied {
+            return;
+        }
+
         self.fan_curves.selected_profile = Some(index);
         self.fan_curve_draft.selected_profile = Some(index);
-        self.command_status = Some(format!(
-            "已选择 {}（本地配置，未写入 EC）",
-            FanCurveSettings::profile_label(index)
-        ));
-        self.command_output.clear();
+        self.command_status = Some(format!("已应用 {}", FanCurveSettings::profile_label(index)));
         self.mark_settings_dirty();
         self.persist_settings_if_due(true);
     }
@@ -221,22 +248,22 @@ impl ClevoLedApp {
     }
 
     pub(super) fn run_dchu_read(&mut self, command: &str) {
-        self.run_dchu_command(&["dchu", command]);
+        self.run_dchu_command(&["dchu".to_owned(), command.to_owned()]);
     }
 
     pub(super) fn run_dchu_write(&mut self, args: &[&str]) {
-        let mut command_args = vec!["dchu"];
-        command_args.extend_from_slice(args);
+        let mut command_args = vec!["dchu".to_owned()];
+        command_args.extend(args.iter().map(|arg| (*arg).to_owned()));
         self.run_dchu_command(&command_args);
     }
 
-    fn run_dchu_command(&mut self, args: &[&str]) {
+    fn run_dchu_command(&mut self, args: &[String]) -> bool {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(err) => {
                 self.command_status = Some("无法定位程序".to_owned());
                 self.command_output = err.to_string();
-                return;
+                return false;
             }
         };
 
@@ -254,10 +281,12 @@ impl ClevoLedApp {
                 if output.status.success() {
                     self.refresh_hardware_snapshot(false);
                 }
+                output.status.success()
             }
             Err(err) => {
                 self.command_status = Some("命令启动失败".to_owned());
                 self.command_output = err.to_string();
+                false
             }
         }
     }

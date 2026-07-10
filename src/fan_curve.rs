@@ -80,6 +80,10 @@ impl FanCurve {
             let max_temp = self.points[index + 1].temp_celsius.saturating_sub(1);
             self.points[index].temp_celsius = self.points[index].temp_celsius.min(max_temp);
         }
+        for index in 1..self.points.len() {
+            let min_duty = self.points[index - 1].duty_percent;
+            self.points[index].duty_percent = self.points[index].duty_percent.max(min_duty);
+        }
         self
     }
 
@@ -98,10 +102,21 @@ impl FanCurve {
             .get(index + 1)
             .map(|point| point.temp_celsius.saturating_sub(1))
             .unwrap_or(FAN_CURVE_MAX_TEMP);
+        let lower_duty = if index == 0 {
+            FAN_CURVE_MIN_DUTY
+        } else {
+            self.points[index - 1].duty_percent
+        };
+        let upper_duty = self
+            .points
+            .get(index + 1)
+            .map(|point| point.duty_percent)
+            .unwrap_or(FAN_CURVE_MAX_DUTY)
+            .max(lower_duty);
 
         self.points[index] = FanCurvePoint {
             temp_celsius: temp_celsius.clamp(lower, upper),
-            duty_percent: duty_percent.clamp(FAN_CURVE_MIN_DUTY, FAN_CURVE_MAX_DUTY),
+            duty_percent: duty_percent.clamp(lower_duty, upper_duty),
         };
     }
 }
@@ -257,7 +272,7 @@ mod tests {
             .points
             .windows(2)
             .all(|pair| pair[0].temp_celsius < pair[1].temp_celsius));
-        assert_eq!(curve.points[3].duty_percent, 100);
+        assert_eq!(curve.points[3].duty_percent, FAN_CURVE_MAX_DUTY);
     }
 
     #[test]
@@ -270,7 +285,37 @@ mod tests {
             curve.points[1].temp_celsius,
             curve.points[2].temp_celsius - 1
         );
-        assert_eq!(curve.points[1].duty_percent, 100);
+        assert_eq!(curve.points[1].duty_percent, curve.points[2].duty_percent);
+    }
+
+    #[test]
+    fn fan_curve_keeps_duty_monotonic() {
+        let curve = FanCurve {
+            points: vec![
+                FanCurvePoint {
+                    temp_celsius: 40,
+                    duty_percent: 70,
+                },
+                FanCurvePoint {
+                    temp_celsius: 55,
+                    duty_percent: 30,
+                },
+                FanCurvePoint {
+                    temp_celsius: 70,
+                    duty_percent: 80,
+                },
+                FanCurvePoint {
+                    temp_celsius: 95,
+                    duty_percent: 60,
+                },
+            ],
+        }
+        .sanitized();
+
+        assert!(curve
+            .points
+            .windows(2)
+            .all(|pair| pair[0].duty_percent <= pair[1].duty_percent));
     }
 
     #[test]

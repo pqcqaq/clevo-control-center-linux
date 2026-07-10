@@ -3,6 +3,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fan_curve::{
+    FanCurve, FanCurvePoint, FAN_CURVE_MAX_DUTY, FAN_CURVE_MAX_TEMP, FAN_CURVE_MIN_DUTY,
+    FAN_CURVE_MIN_TEMP, FAN_CURVE_POINT_COUNT,
+};
+
 const DEFAULT_DCHU_CONTROL_PROC_PATH: &str = "/proc/clevo_dchu_control";
 const DEFAULT_DCHU_CONFIG_PROC_PATH: &str = "/proc/clevo_dchu_config";
 const DEFAULT_DCHU_STATUS_PROC_PATH: &str = "/proc/clevo_dchu_status";
@@ -537,6 +542,9 @@ pub fn print_dchu_usage() {
         "  clevo-control-center dchu fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6> --i-understand"
     );
     println!("  clevo-control-center dchu power-mode <0..3> --i-understand");
+    println!(
+        "  clevo-control-center dchu fan-curve <cpu t:d,t:d,t:d,t:d> <gpu t:d,t:d,t:d,t:d> --i-understand"
+    );
 }
 
 pub fn parse_fan_mode(value: &str) -> Result<u32, String> {
@@ -624,6 +632,17 @@ fn run_power_mode(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn run_fan_curve(cpu_value: &str, gpu_value: &str) -> Result<(), String> {
+    let cpu_points = parse_fan_curve_points_arg(cpu_value)?;
+    let gpu_points = parse_fan_curve_points_arg(gpu_value)?;
+    let cpu_arg = format_fan_curve_points_arg(&cpu_points);
+    let gpu_arg = format_fan_curve_points_arg(&gpu_points);
+
+    dchu_control_write(&format!("fan-curve {cpu_arg} {gpu_arg}"))?;
+    println!("fan curve set via /proc/clevo_dchu_control");
+    Ok(())
+}
+
 fn print_app_settings() -> Result<(), String> {
     let config = read_dchu_config()?;
     println!(
@@ -653,6 +672,79 @@ pub fn parse_power_mode(value: &str) -> Result<u32, String> {
     Ok(mode)
 }
 
+pub fn fan_curve_points_arg(curve: &FanCurve) -> Result<String, String> {
+    let curve = curve.clone().sanitized();
+    validate_fan_curve_points(&curve.points)?;
+    Ok(format_fan_curve_points_arg(&curve.points))
+}
+
+fn parse_fan_curve_points_arg(value: &str) -> Result<Vec<FanCurvePoint>, String> {
+    let points = value
+        .split(',')
+        .map(parse_fan_curve_point_arg)
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_fan_curve_points(&points)?;
+    Ok(points)
+}
+
+fn parse_fan_curve_point_arg(value: &str) -> Result<FanCurvePoint, String> {
+    let Some((temp, duty)) = value.split_once(':') else {
+        return Err("fan curve point must use temp:duty".to_owned());
+    };
+    let temp_celsius = temp
+        .parse::<u8>()
+        .map_err(|_| "fan curve temperature must be decimal 30..100".to_owned())?;
+    let duty_percent = duty
+        .parse::<u8>()
+        .map_err(|_| "fan curve duty must be decimal 0..100".to_owned())?;
+
+    Ok(FanCurvePoint {
+        temp_celsius,
+        duty_percent,
+    })
+}
+
+fn validate_fan_curve_points(points: &[FanCurvePoint]) -> Result<(), String> {
+    if points.len() != FAN_CURVE_POINT_COUNT {
+        return Err(format!(
+            "fan curve must contain exactly {FAN_CURVE_POINT_COUNT} points"
+        ));
+    }
+
+    for (index, point) in points.iter().enumerate() {
+        if !(FAN_CURVE_MIN_TEMP..=FAN_CURVE_MAX_TEMP).contains(&point.temp_celsius) {
+            return Err(format!(
+                "fan curve point {} temperature is out of range",
+                index + 1
+            ));
+        }
+        if !(FAN_CURVE_MIN_DUTY..=FAN_CURVE_MAX_DUTY).contains(&point.duty_percent) {
+            return Err(format!(
+                "fan curve point {} duty is out of range",
+                index + 1
+            ));
+        }
+        if let Some(previous) = index.checked_sub(1).and_then(|prev| points.get(prev)) {
+            if point.temp_celsius <= previous.temp_celsius {
+                return Err("fan curve temperatures must increase from left to right".to_owned());
+            }
+            if point.duty_percent < previous.duty_percent {
+                return Err("fan curve duty must not decrease".to_owned());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn format_fan_curve_points_arg(points: &[FanCurvePoint]) -> String {
+    points
+        .iter()
+        .map(|point| format!("{}:{}", point.temp_celsius, point.duty_percent))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 pub fn run_dchu_cli(args: &[String]) -> Result<(), String> {
     let Some(command) = args.first().map(String::as_str) else {
         print_dchu_usage();
@@ -669,6 +761,13 @@ pub fn run_dchu_cli(args: &[String]) -> Result<(), String> {
         "power-mode" => {
             require_danger_flag(args)?;
             run_power_mode(args.get(1).ok_or("power-mode requires <0..3>")?)?;
+        }
+        "fan-curve" => {
+            require_danger_flag(args)?;
+            run_fan_curve(
+                args.get(1).ok_or("fan-curve requires <cpu points>")?,
+                args.get(2).ok_or("fan-curve requires <gpu points>")?,
+            )?;
         }
         "help" | "--help" | "-h" => print_dchu_usage(),
         _ => return Err(format!("unknown dchu command: {command}")),
@@ -923,6 +1022,44 @@ mod tests {
         assert!(parse_power_mode("4").is_err());
         assert!(parse_power_mode("0x2").is_err());
         assert!(parse_power_mode("raw-data").is_err());
+    }
+
+    #[test]
+    fn formats_and_parses_fan_curve_points_arg() {
+        let curve = FanCurve {
+            points: vec![
+                FanCurvePoint {
+                    temp_celsius: 40,
+                    duty_percent: 28,
+                },
+                FanCurvePoint {
+                    temp_celsius: 58,
+                    duty_percent: 42,
+                },
+                FanCurvePoint {
+                    temp_celsius: 78,
+                    duty_percent: 72,
+                },
+                FanCurvePoint {
+                    temp_celsius: 100,
+                    duty_percent: 100,
+                },
+            ],
+        };
+
+        let value = fan_curve_points_arg(&curve).unwrap();
+        let parsed = parse_fan_curve_points_arg(&value).unwrap();
+
+        assert_eq!(value, "40:28,58:42,78:72,100:100");
+        assert_eq!(parsed, curve.points);
+    }
+
+    #[test]
+    fn rejects_invalid_fan_curve_points_arg() {
+        assert!(parse_fan_curve_points_arg("40:20,58:30,80:70").is_err());
+        assert!(parse_fan_curve_points_arg("40:20,58:30,58:70,100:100").is_err());
+        assert!(parse_fan_curve_points_arg("40:20,58:30,80:10,100:100").is_err());
+        assert!(parse_fan_curve_points_arg("40:20,58:30,80:70,120:100").is_err());
     }
 
     #[test]

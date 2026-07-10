@@ -424,19 +424,21 @@
 - Linux 内核模块只保留一个统一控制入口 `/proc/clevo_dchu_control`，只接受白名单命令：
   - `fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6>`
   - `power-mode <0..3>`
+  - `fan-curve <cpu 4点> <gpu 4点>`，每点为 `温度:占空比`，温度递增且占空比不下降。
 - Linux 内核模块只保留受限 AppSettings 兼容读回 `/proc/clevo_dchu_app_settings`：
   - `page=1 offset=1`：电源模式选中态。
   - `page=4 offset=5`：风扇模式选中态。
 - 该兼容层不是完整 AppSettings，不提供任意 page/offset 读写，不暴露 payload。
 - 写 `fan-mode` 按官方顺序：先写硬件 `SCMD(0x79, sub=1)`，成功后同步 AppSettings 兼容字段 `4:5`。
 - 写 `power-mode` 按官方读回语义：先更新 AppSettings 兼容字段 `1:1`，再写硬件 `SCMD(0x79, sub=0x19)`；硬件失败则回滚兼容字段，避免 UI 显示未生效状态。
+- 写 `fan-curve` 时，用户态和内核态都只接受固定 4 点 CPU/GPU 曲线；内核模块按原厂公式生成 `SetWMIPackage(14)` buffer，写入成功后再调用 `fan-mode custom`，因此 GUI 总览选择 `曲线 1/2/3` 才会真正应用到 EC。
 - GUI 按钮高亮只读 `app_power_mode/app_fan_mode`，不再使用 `mode_status` 推导。
-- GUI 的“风扇”页面可以编辑三组本地 CPU/GPU 曲线；首页/性能页显示的 `曲线 1/2/3` 只是本地配置选择，不调用 `SetWMIPackage(14)`，也不写 AppSettings 风扇表镜像。
+- GUI 的“风扇”页面编辑三组本地 CPU/GPU 曲线并保存到 app 配置；首页显示的 `曲线 1/2/3` 负责把对应曲线写入 EC。Linux 当前仍不写完整 AppSettings 风扇表持久镜像，只同步 `4:5=custom` 的受限模式读回。
 - GUI 的“电池”页面可以编辑本地电池策略、充电阈值和低电量策略意图；当前不调用 Battery Saver/EnergySave 写接口，不写 EC，也不切换系统电源计划。
 
 ### 仍未完全确认的点
 - Windows 原厂完整 AppSettings 存储由 AcpiBridge IOCTL `0x32240c` 管理；Linux 目前没有确认同等持久存储位置，因此受限 AppSettings 是运行时兼容镜像。
 - CPU 温度的 `CalCPUTemp(TDP, raw)` 修正尚未完整复刻；当前只展示 EC raw 摄氏度候选。
-- Linux GUI 已把当前可安全使用的 OEM 能力位映射为 UI 可见性规则：`PSF5 bit0` 控制电源模式按钮组，`PSF5 bit7` 控制风扇模式按钮组，`PSF2 bit15` 控制 Silent，`0x0D[0x0E] == 5` 控制 MaxQ。风扇曲线和电池策略当前只有本地编辑和本地选择；MUX、GPU/CPU OC 等仍只在高级页按能力位只读展示。
-- MUX、风扇曲线、GPU OC、CPU OC、电池节能、AntiDust 等高级写入虽然已有静态链路，但尚未做 Linux 实机逐项验证和失败恢复设计；暂不公开写入口。
+- Linux GUI 已把当前可安全使用的 OEM 能力位映射为 UI 可见性规则：`PSF5 bit0` 控制电源模式按钮组，`PSF5 bit7` 控制风扇模式按钮组，`PSF2 bit15` 控制 Silent，`0x0D[0x0E] == 5` 控制 MaxQ。电池策略当前只有本地编辑；MUX、GPU/CPU OC 等仍只在高级页按能力位只读展示。
+- MUX、GPU OC、CPU OC、电池节能、AntiDust 等高级写入虽然已有静态链路，但尚未做 Linux 实机逐项验证和失败恢复设计；暂不公开写入口。
 - InstallShield 未解包服务组件可能包含 FnKey/PowerBiosServer 的最终电源落地逻辑；当前结论基于已解包 AppX、DLL 反汇编和 Linux 实机验证。
