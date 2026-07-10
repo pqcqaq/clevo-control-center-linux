@@ -32,8 +32,6 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    overview_header(ui);
-    ui.add_space(12.0);
     overview_section(ui, "风扇阵列", "FAN ARRAY", |ui| {
         overview_gauges(ui, app)
     });
@@ -41,57 +39,6 @@ fn overview_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     overview_section(ui, "控制矩阵", "CONTROL MATRIX", |ui| {
         overview_controls(ui, app)
     });
-}
-
-fn overview_header(ui: &mut Ui) {
-    let width = ui.available_width().max(1.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 44.0), Sense::hover());
-    let painter = ui.painter_at(rect);
-    let accent = Color32::from_rgb(214, 157, 92);
-    let dim = Color32::from_rgb(77, 68, 53);
-
-    painter.line_segment(
-        [
-            pos2(rect.left() + 2.0, rect.bottom() - 3.0),
-            pos2(rect.right() - 2.0, rect.bottom() - 3.0),
-        ],
-        Stroke::new(1.0, Color32::from_rgb(58, 52, 42)),
-    );
-    painter.line_segment(
-        [
-            pos2(rect.left() + 3.0, rect.bottom() - 3.0),
-            pos2(rect.left() + 24.0, rect.top() + 7.0),
-        ],
-        Stroke::new(1.5, accent),
-    );
-    painter.line_segment(
-        [
-            pos2(rect.right() - 84.0, rect.top() + 10.0),
-            pos2(rect.right() - 12.0, rect.top() + 10.0),
-        ],
-        Stroke::new(1.0, dim),
-    );
-    for index in 0..3 {
-        let x = rect.right() - 66.0 + index as f32 * 18.0;
-        painter.line_segment(
-            [pos2(x, rect.top() + 19.0), pos2(x + 9.0, rect.top() + 19.0)],
-            Stroke::new(1.0, Color32::from_rgb(119, 91, 54)),
-        );
-    }
-    painter.text(
-        pos2(rect.left() + 34.0, rect.top() + 12.0),
-        Align2::LEFT_CENTER,
-        "系统总览",
-        FontId::proportional(23.0),
-        Color32::from_rgb(239, 234, 223),
-    );
-    painter.text(
-        pos2(rect.left() + 35.0, rect.top() + 33.0),
-        Align2::LEFT_CENTER,
-        "THERMAL / POWER CONTROL",
-        FontId::proportional(10.0),
-        Color32::from_rgb(151, 145, 135),
-    );
 }
 
 fn overview_section(ui: &mut Ui, title: &str, code: &str, add_contents: impl FnOnce(&mut Ui)) {
