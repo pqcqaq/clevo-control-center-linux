@@ -117,4 +117,19 @@
   - payload 仍是首个 DWORD，`sub = payload >> 24`，`value = payload & 0x00ffffff`。
   - `sub=0x19` 且 `value & 0x3f < 4` 时会设置 `EC.CPCM`、`EC.APRD`、`EC.FCMD=0xD8`，并触发 `PRM0=0x11; PRM1=mode; SSMP=0xC0`。
   - `APPM` 映射表为 `[0x02, 0x03, 0x01, 0x00]`，说明 0..3 四个性能档位会映射为不同 EC 参数，但还不能直接命名为静音/娱乐/性能等，需要和原厂控制中心 UI 或实际行为再对照。
+- 2026-07-10 使用 `scripts/probe-mode-coupling.sh` 在实机验证电源模式和风扇模式写入后的 `0x0D[0x0E]` 读回值。该字段不是两个独立状态源，而是会被电源/风扇写入共同覆盖：
+  - `power:0 -> 0x80`
+  - `power:1 -> 0x02`
+  - `power:2 -> 0x08`
+  - `power:3 -> 0x02`
+  - `fan:max -> 0x10`
+  - `fan:silent -> 0x08`
+  - `fan:maxq -> 0x02`
+  - `fan:auto` 在 `power:0` 基线下保持 `0x80`，在 `0x02` 基线下保持 `0x02`
+- 同次隔离测试的 UI 选中推导结果：
+  - 以 `fan:max` 为基线，写 `power:0/1/2/3` 都会让风扇选中从 `max` 变为 `none/silent/none` 等状态，说明电源写入会影响风扇选中读回。
+  - 以 `power:0` 为基线，写 `fan:max/silent/maxq` 会让电源选中从 `0` 变为 `none/2/none`，说明风扇写入会影响电源选中读回。
+  - `0x08` 同时对应当前 UI 规则里的 `power:2` 和 `fan:silent`，不能同时作为两个按钮组的可靠选中依据。
+  - `0x02` 也不能区分 `power:1`、`power:3`、`fan:maxq`、部分 `fan:auto` 场景。
+  - 结论：在找到独立 EC 状态位之前，GUI 不应仅靠 `0x0D[0x0E]` 同时高亮电源模式和风扇模式；最多只能把该字段作为高级调试信息或单组临时回读。
 - 后续如果要实现风扇/电源功能，建议先做只读 CLI/debug 接口展示 `0x0C/0x0D`，写接口必须二次确认并加显式风险开关，不应直接放进 GUI 默认功能。
