@@ -9,8 +9,8 @@ use super::widgets::{
     color_swatch, command_panel, control_group, fan_gauge, hardware_details, page_header,
 };
 use crate::dchu::{
-    available_fan_modes, selected_fan_mode_from_snapshot, selected_power_mode_from_snapshot,
-    FanStatus, HardwareSnapshot,
+    available_fan_modes, available_power_modes, selected_fan_mode_from_snapshot,
+    selected_power_mode_from_snapshot, FanStatus, HardwareSnapshot,
 };
 use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
@@ -161,28 +161,55 @@ fn overview_gauge_leading_space(available_width: f32, row_width: f32) -> f32 {
 }
 
 fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
+    let power_modes = overview_power_mode_items(app.hardware.as_ref());
     let selected_power_mode = selected_power_mode_from_snapshot(app.hardware.as_ref());
-    overview_button_row(
-        ui,
-        "电源模式",
-        "POWER",
-        &[("安静", "0"), ("省电", "1"), ("性能", "2"), ("娱乐", "3")],
-        selected_power_mode,
-        |mode| app.run_dchu_write(&["power-mode", mode, "--i-understand"]),
-    );
-    ui.add_space(14.0);
-    overview_control_separator(ui);
-    ui.add_space(14.0);
     let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
     let selected_fan_mode = selected_fan_mode_from_snapshot(app.hardware.as_ref());
-    overview_button_row(
-        ui,
-        "风扇模式",
-        "FAN",
-        &fan_modes,
-        selected_fan_mode,
-        |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
-    );
+
+    if !power_modes.is_empty() {
+        overview_button_row(
+            ui,
+            "电源模式",
+            "POWER",
+            &power_modes,
+            selected_power_mode,
+            |mode| app.run_dchu_write(&["power-mode", mode, "--i-understand"]),
+        );
+    }
+
+    if !power_modes.is_empty() && !fan_modes.is_empty() {
+        ui.add_space(14.0);
+        overview_control_separator(ui);
+        ui.add_space(14.0);
+    }
+
+    if !fan_modes.is_empty() {
+        overview_button_row(
+            ui,
+            "风扇模式",
+            "FAN",
+            &fan_modes,
+            selected_fan_mode,
+            |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
+        );
+    }
+
+    if power_modes.is_empty() && fan_modes.is_empty() {
+        ui.label(
+            RichText::new("当前固件未报告可写电源或风扇模式能力")
+                .size(13.0)
+                .color(Color32::from_rgb(151, 145, 135)),
+        );
+    }
+}
+
+fn overview_power_mode_items(
+    snapshot: Option<&HardwareSnapshot>,
+) -> Vec<(&'static str, &'static str)> {
+    available_power_modes(snapshot)
+        .iter()
+        .map(|mode| (mode.label, mode.value))
+        .collect()
 }
 
 fn overview_fan_mode_items(
@@ -595,28 +622,40 @@ fn lighting_slider(ui: &mut Ui, label: &str, value: &mut u8, enabled: bool) {
 
 fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     page_header(ui, "性能", "DCHU 电源档位和风扇策略");
+    let power_modes = overview_power_mode_items(app.hardware.as_ref());
+    let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-        control_group(
-            ui,
-            "电源模式",
-            &[("安静", "0"), ("省电", "1"), ("性能", "2"), ("娱乐", "3")],
-            selected_power_mode_from_snapshot(app.hardware.as_ref()),
-            |mode| {
-                app.run_dchu_write(&["power-mode", mode, "--i-understand"]);
-            },
-        );
-        let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
-        control_group(
-            ui,
-            "风扇模式",
-            &fan_modes,
-            selected_fan_mode_from_snapshot(app.hardware.as_ref()),
-            |mode| {
-                app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
-            },
-        );
+        if !power_modes.is_empty() {
+            control_group(
+                ui,
+                "电源模式",
+                &power_modes,
+                selected_power_mode_from_snapshot(app.hardware.as_ref()),
+                |mode| {
+                    app.run_dchu_write(&["power-mode", mode, "--i-understand"]);
+                },
+            );
+        }
+        if !fan_modes.is_empty() {
+            control_group(
+                ui,
+                "风扇模式",
+                &fan_modes,
+                selected_fan_mode_from_snapshot(app.hardware.as_ref()),
+                |mode| {
+                    app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
+                },
+            );
+        }
     });
+    if power_modes.is_empty() && fan_modes.is_empty() {
+        ui.label(
+            RichText::new("当前固件未报告可写电源或风扇模式能力")
+                .size(13.0)
+                .color(Color32::from_rgb(151, 145, 135)),
+        );
+    }
     ui.add_space(12.0);
     command_panel(ui, app);
 }

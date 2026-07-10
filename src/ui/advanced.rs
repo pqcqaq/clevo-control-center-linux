@@ -156,6 +156,112 @@ pub(super) fn other_info(ui: &mut Ui, snapshot: Option<&HardwareSnapshot>) {
             }
         });
 
+    if let Some(config) = &snapshot.dchu_config {
+        ui.add_space(14.0);
+        ui.label(
+            RichText::new("官方能力位解析")
+                .size(13.0)
+                .strong()
+                .color(Color32::from_rgb(222, 214, 199)),
+        );
+        ui.add_space(6.0);
+        egui::Grid::new("advanced-capability-summary")
+            .striped(true)
+            .spacing(vec2(18.0, 7.0))
+            .show(ui, |ui| {
+                table_header(ui, "能力");
+                table_header(ui, "来源");
+                table_header(ui, "状态");
+                ui.end_row();
+
+                capability_row(
+                    ui,
+                    "电源模式 UI",
+                    "PSF5 bit0",
+                    config.power_mode_capability(),
+                );
+                capability_row(
+                    ui,
+                    "风扇设置 UI",
+                    "PSF5 bit7",
+                    config.fan_speed_setting_capability(),
+                );
+                capability_row(
+                    ui,
+                    "Silent 风扇模式",
+                    "PSF2 bit15 FanLess",
+                    config.silent_fan_capability(),
+                );
+                capability_row(
+                    ui,
+                    "MaxQ 风扇模式",
+                    "0x0D[0x0E] InitFanMode == 5",
+                    config.maxq_fan_capability(),
+                );
+                capability_row(
+                    ui,
+                    "自定义风扇表",
+                    "PSF5 bit7 + FanCount + 0x0D[0x2B] bit1",
+                    config.custom_fan_table_capability(),
+                );
+                capability_row(
+                    ui,
+                    "旧版独显直连/MUX",
+                    "PSF2 bit20",
+                    config.legacy_gpu_mux_capability(),
+                );
+                capability_row(
+                    ui,
+                    "GPU OC",
+                    "PSF5 bit5 / PSF2 bit26..27",
+                    config.gpu_oc_capability(),
+                );
+                capability_row(
+                    ui,
+                    "CPU OC",
+                    "PSF5 bit6 / PSF2 bit23",
+                    config.cpu_oc_capability(),
+                );
+                capability_row(ui, "XMP", "PSF2 bit24", config.xmp_capability());
+                capability_row(
+                    ui,
+                    "EnergySave",
+                    "PSF5 bit8",
+                    config.energy_save_capability(),
+                );
+                capability_row(
+                    ui,
+                    "Battery Utility",
+                    "PSF5 bit9",
+                    config.battery_utility_capability(),
+                );
+                capability_row(ui, "AntiDust", "PSF4 bit7", config.anti_dust_capability());
+                capability_row(
+                    ui,
+                    "FanOffset",
+                    "PSF4 bit10 取反",
+                    config.fan_offset_capability(),
+                );
+                capability_row(ui, "DTT", "PSF4 bit12", config.dtt_capability());
+
+                ui.label("FanCount");
+                ui.monospace("0x0D[0x0C]");
+                ui.label(format_optional_u8(config.fan_count()));
+                ui.end_row();
+
+                ui.label("InitFanMode");
+                ui.monospace("0x0D[0x0E]");
+                ui.label(format_optional_u8(config.init_fan_mode()));
+                ui.end_row();
+            });
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("高级能力目前只读展示；风扇曲线、MUX、超频、电池策略等未做 Linux 写入闭环前不作为控制项公开。")
+                .size(12.0)
+                .color(Color32::from_rgb(151, 145, 135)),
+        );
+    }
+
     ui.add_space(12.0);
     ui.label(
         RichText::new("其他非零 raw byte")
@@ -238,6 +344,21 @@ fn format_optional_u32_hex(value: Option<u32>) -> String {
     value
         .map(|value| format!("0x{value:08x}"))
         .unwrap_or_else(|| "--".to_owned())
+}
+
+fn capability_row(ui: &mut Ui, label: &str, source: &str, value: Option<bool>) {
+    ui.label(label);
+    ui.monospace(source);
+    ui.label(format_capability(value));
+    ui.end_row();
+}
+
+fn format_capability(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "支持",
+        Some(false) => "不支持",
+        None => "未知",
+    }
 }
 
 fn temperature_rows(snapshot: &HardwareSnapshot) -> Vec<(String, usize, u8, Option<u8>)> {

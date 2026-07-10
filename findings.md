@@ -435,6 +435,6 @@
 ### 仍未完全确认的点
 - Windows 原厂完整 AppSettings 存储由 AcpiBridge IOCTL `0x32240c` 管理；Linux 目前没有确认同等持久存储位置，因此受限 AppSettings 是运行时兼容镜像。
 - CPU 温度的 `CalCPUTemp(TDP, raw)` 修正尚未完整复刻；当前只展示 EC raw 摄氏度候选。
-- FanLess、TurboFan、DTT、MUX、Battery Saver 等能力位已有原厂代码证据，但 Linux 当前还没有把所有能力位都映射成 UI 自动隐藏规则；能确认的先用，不能确认的只读展示。
+- Linux GUI 已把当前可安全使用的 OEM 能力位映射为 UI 可见性规则：`PSF5 bit0` 控制电源模式按钮组，`PSF5 bit7` 控制风扇模式按钮组，`PSF2 bit15` 控制 Silent，`0x0D[0x0E] == 5` 控制 MaxQ。MUX、风扇曲线、GPU/CPU OC、电池策略等仍只在高级页按能力位只读展示。
 - MUX、风扇曲线、GPU OC、CPU OC、电池节能、AntiDust 等高级写入虽然已有静态链路，但尚未做 Linux 实机逐项验证和失败恢复设计；暂不公开写入口。
 - InstallShield 未解包服务组件可能包含 FnKey/PowerBiosServer 的最终电源落地逻辑；当前结论基于已解包 AppX、DLL 反汇编和 Linux 实机验证。

@@ -15,39 +15,50 @@ pub struct FanModeOption {
     pub value: &'static str,
 }
 
-const SAFE_FAN_MODES: [FanModeOption; 3] = [
-    FanModeOption {
-        label: "自动",
-        value: "auto",
-    },
-    FanModeOption {
-        label: "最大",
-        value: "max",
-    },
-    FanModeOption {
-        label: "MaxQ",
-        value: "maxq",
-    },
-];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PowerModeOption {
+    pub label: &'static str,
+    pub value: &'static str,
+}
 
-const CONFIGURED_FAN_MODES: [FanModeOption; 4] = [
-    FanModeOption {
-        label: "自动",
-        value: "auto",
+const FAN_MODE_AUTO: FanModeOption = FanModeOption {
+    label: "自动",
+    value: "auto",
+};
+const FAN_MODE_MAX: FanModeOption = FanModeOption {
+    label: "最大",
+    value: "max",
+};
+const FAN_MODE_SILENT: FanModeOption = FanModeOption {
+    label: "静音",
+    value: "silent",
+};
+const FAN_MODE_MAXQ: FanModeOption = FanModeOption {
+    label: "MaxQ",
+    value: "maxq",
+};
+
+const FALLBACK_FAN_MODES: [FanModeOption; 2] = [FAN_MODE_AUTO, FAN_MODE_MAX];
+
+const POWER_MODE_OPTIONS: [PowerModeOption; 4] = [
+    PowerModeOption {
+        label: "安静",
+        value: "0",
     },
-    FanModeOption {
-        label: "最大",
-        value: "max",
+    PowerModeOption {
+        label: "省电",
+        value: "1",
     },
-    FanModeOption {
-        label: "静音",
-        value: "silent",
+    PowerModeOption {
+        label: "性能",
+        value: "2",
     },
-    FanModeOption {
-        label: "MaxQ",
-        value: "maxq",
+    PowerModeOption {
+        label: "娱乐",
+        value: "3",
     },
 ];
+const NO_POWER_MODES: [PowerModeOption; 0] = [];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FanStatus {
@@ -90,6 +101,107 @@ pub struct DchuConfig {
     pub app_fan_mode: Option<u8>,
     #[serde(default)]
     pub raw_config: Vec<u8>,
+}
+
+impl DchuConfig {
+    pub fn fan_count(&self) -> Option<u8> {
+        self.raw_config.get(0x0c).copied().or(self.fanq)
+    }
+
+    pub fn init_fan_mode(&self) -> Option<u8> {
+        self.raw_config.get(0x0e).copied().or(self.mode_status)
+    }
+
+    pub fn power_mode_capability(&self) -> Option<bool> {
+        capability_bit(self.psf5, 0)
+    }
+
+    pub fn fan_speed_setting_capability(&self) -> Option<bool> {
+        capability_bit(self.psf5, 7)
+    }
+
+    pub fn silent_fan_capability(&self) -> Option<bool> {
+        capability_bit(self.psf2, 15)
+    }
+
+    pub fn maxq_fan_capability(&self) -> Option<bool> {
+        self.init_fan_mode().map(|mode| mode == 5)
+    }
+
+    pub fn custom_fan_table_capability(&self) -> Option<bool> {
+        let fan_setting = self.fan_speed_setting_capability()?;
+        let fan_count = self.fan_count()?;
+        let custom_disabled = self.custom_fan_disabled_by_config()?;
+        Some(fan_setting && fan_count > 1 && !custom_disabled)
+    }
+
+    pub fn legacy_gpu_mux_capability(&self) -> Option<bool> {
+        capability_bit(self.psf2, 20)
+    }
+
+    pub fn gpu_oc_capability(&self) -> Option<bool> {
+        any_known_capability(&[
+            capability_bit(self.psf5, 5),
+            capability_bit(self.psf2, 26),
+            capability_bit(self.psf2, 27),
+        ])
+    }
+
+    pub fn cpu_oc_capability(&self) -> Option<bool> {
+        any_known_capability(&[capability_bit(self.psf5, 6), capability_bit(self.psf2, 23)])
+    }
+
+    pub fn xmp_capability(&self) -> Option<bool> {
+        capability_bit(self.psf2, 24)
+    }
+
+    pub fn energy_save_capability(&self) -> Option<bool> {
+        capability_bit(self.psf5, 8)
+    }
+
+    pub fn battery_utility_capability(&self) -> Option<bool> {
+        capability_bit(self.psf5, 9)
+    }
+
+    pub fn anti_dust_capability(&self) -> Option<bool> {
+        capability_bit(self.psf4, 7)
+    }
+
+    pub fn fan_offset_capability(&self) -> Option<bool> {
+        capability_bit(self.psf4, 10).map(|disabled| !disabled)
+    }
+
+    pub fn dtt_capability(&self) -> Option<bool> {
+        capability_bit(self.psf4, 12)
+    }
+
+    fn supports_power_mode_ui(&self) -> bool {
+        self.power_mode_capability().unwrap_or(true)
+    }
+
+    fn supports_fan_mode_ui(&self) -> bool {
+        self.fan_speed_setting_capability().unwrap_or(true)
+    }
+
+    fn custom_fan_disabled_by_config(&self) -> Option<bool> {
+        self.raw_config
+            .get(0x2b)
+            .map(|value| ((value >> 1) & 1) == 1)
+    }
+}
+
+fn capability_bit(value: Option<u32>, bit: u32) -> Option<bool> {
+    value.map(|value| (value & (1u32 << bit)) != 0)
+}
+
+fn any_known_capability(values: &[Option<bool>]) -> Option<bool> {
+    if values.iter().any(|value| *value == Some(true)) {
+        Some(true)
+    } else if values.iter().all(Option::is_some) {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -347,14 +459,34 @@ fn print_status(bytes: &[u8]) {
     );
 }
 
-pub fn available_fan_modes(snapshot: Option<&HardwareSnapshot>) -> &'static [FanModeOption] {
-    if snapshot
-        .and_then(|snapshot| snapshot.dchu_config.as_ref())
-        .is_some()
-    {
-        &CONFIGURED_FAN_MODES
+pub fn available_fan_modes(snapshot: Option<&HardwareSnapshot>) -> Vec<FanModeOption> {
+    let Some(config) = snapshot.and_then(|snapshot| snapshot.dchu_config.as_ref()) else {
+        return FALLBACK_FAN_MODES.to_vec();
+    };
+
+    if !config.supports_fan_mode_ui() {
+        return Vec::new();
+    }
+
+    let mut modes = vec![FAN_MODE_AUTO, FAN_MODE_MAX];
+    if config.silent_fan_capability().unwrap_or(false) {
+        modes.push(FAN_MODE_SILENT);
+    }
+    if config.maxq_fan_capability().unwrap_or(false) {
+        modes.push(FAN_MODE_MAXQ);
+    }
+    modes
+}
+
+pub fn available_power_modes(snapshot: Option<&HardwareSnapshot>) -> &'static [PowerModeOption] {
+    let Some(config) = snapshot.and_then(|snapshot| snapshot.dchu_config.as_ref()) else {
+        return &POWER_MODE_OPTIONS;
+    };
+
+    if config.supports_power_mode_ui() {
+        &POWER_MODE_OPTIONS
     } else {
-        &SAFE_FAN_MODES
+        &NO_POWER_MODES
     }
 }
 
@@ -657,6 +789,134 @@ mod tests {
     }
 
     #[test]
+    fn derives_oem_capabilities_from_psf_and_config_buffer() {
+        let config = dchu_config_with_raw(0x0000_03e1, 0x0d90_8000, 0x0000_1480, 2, 5, 0x00);
+
+        assert_eq!(config.fan_count(), Some(2));
+        assert_eq!(config.init_fan_mode(), Some(5));
+        assert_eq!(config.power_mode_capability(), Some(true));
+        assert_eq!(config.fan_speed_setting_capability(), Some(true));
+        assert_eq!(config.silent_fan_capability(), Some(true));
+        assert_eq!(config.maxq_fan_capability(), Some(true));
+        assert_eq!(config.custom_fan_table_capability(), Some(true));
+        assert_eq!(config.legacy_gpu_mux_capability(), Some(true));
+        assert_eq!(config.cpu_oc_capability(), Some(true));
+        assert_eq!(config.xmp_capability(), Some(true));
+        assert_eq!(config.gpu_oc_capability(), Some(true));
+        assert_eq!(config.energy_save_capability(), Some(true));
+        assert_eq!(config.battery_utility_capability(), Some(true));
+        assert_eq!(config.anti_dust_capability(), Some(true));
+        assert_eq!(config.fan_offset_capability(), Some(false));
+        assert_eq!(config.dtt_capability(), Some(true));
+    }
+
+    #[test]
+    fn fan_modes_follow_oem_visibility_bits() {
+        let snapshot = snapshot_with_config(dchu_config_with_raw(
+            0x0000_0081,
+            0x0000_8000,
+            0,
+            2,
+            5,
+            0x00,
+        ));
+
+        assert_eq!(
+            fan_mode_values(&available_fan_modes(Some(&snapshot))),
+            vec!["auto", "max", "silent", "maxq"]
+        );
+    }
+
+    #[test]
+    fn silent_fan_mode_is_hidden_without_fanless_capability() {
+        let snapshot = snapshot_with_config(dchu_config_with_raw(
+            0x0000_0081,
+            0x0000_0000,
+            0,
+            2,
+            5,
+            0x00,
+        ));
+
+        assert_eq!(
+            fan_mode_values(&available_fan_modes(Some(&snapshot))),
+            vec!["auto", "max", "maxq"]
+        );
+    }
+
+    #[test]
+    fn maxq_fan_mode_is_hidden_without_init_fan_mode_five() {
+        let snapshot = snapshot_with_config(dchu_config_with_raw(
+            0x0000_0081,
+            0x0000_8000,
+            0,
+            2,
+            0,
+            0x00,
+        ));
+
+        assert_eq!(
+            fan_mode_values(&available_fan_modes(Some(&snapshot))),
+            vec!["auto", "max", "silent"]
+        );
+    }
+
+    #[test]
+    fn custom_fan_table_capability_does_not_create_write_mode_button() {
+        let snapshot = snapshot_with_config(dchu_config_with_raw(
+            0x0000_0081,
+            0x0000_8000,
+            0,
+            2,
+            5,
+            0x00,
+        ));
+
+        assert_eq!(
+            snapshot
+                .dchu_config
+                .as_ref()
+                .unwrap()
+                .custom_fan_table_capability(),
+            Some(true)
+        );
+        assert!(!fan_mode_values(&available_fan_modes(Some(&snapshot))).contains(&"custom"));
+    }
+
+    #[test]
+    fn fan_mode_controls_hide_when_fan_setting_capability_is_absent() {
+        let snapshot = snapshot_with_config(dchu_config_with_raw(
+            0x0000_0001,
+            0x0000_8000,
+            0,
+            2,
+            5,
+            0x00,
+        ));
+
+        assert!(available_fan_modes(Some(&snapshot)).is_empty());
+    }
+
+    #[test]
+    fn power_mode_controls_hide_when_power_capability_is_absent() {
+        let snapshot = snapshot_with_config(dchu_config_with_raw(0x0000_0080, 0, 0, 2, 5, 0x00));
+
+        assert!(available_power_modes(Some(&snapshot)).is_empty());
+    }
+
+    #[test]
+    fn unavailable_config_keeps_safe_control_fallbacks() {
+        assert_eq!(
+            fan_mode_values(&available_fan_modes(None)),
+            vec!["auto", "max"]
+        );
+        assert_eq!(
+            power_mode_values(available_power_modes(None)),
+            vec!["0", "1", "2", "3"]
+        );
+    }
+
+    #[test]
     fn parses_limited_power_modes() {
         assert_eq!(parse_power_mode("0").unwrap(), 0);
         assert_eq!(parse_power_mode("3").unwrap(), 3);
@@ -730,5 +990,42 @@ mod tests {
         let parsed = parse_dchu_buffer_reply("buffer 4\n01 02 0a ff\n").unwrap();
         assert_eq!(parsed, vec![0x01, 0x02, 0x0a, 0xff]);
         assert!(parse_dchu_buffer_reply("integer 0x79\n").is_err());
+    }
+
+    fn dchu_config_with_raw(
+        psf5: u32,
+        psf2: u32,
+        psf4: u32,
+        fan_count: u8,
+        init_fan_mode: u8,
+        custom_flags: u8,
+    ) -> DchuConfig {
+        let mut raw_config = vec![0; 0x2c];
+        raw_config[0x0c] = fan_count;
+        raw_config[0x0e] = init_fan_mode;
+        raw_config[0x2b] = custom_flags;
+        DchuConfig {
+            fanq: Some(fan_count),
+            mode_status: Some(init_fan_mode),
+            psf2: Some(psf2),
+            psf4: Some(psf4),
+            psf5: Some(psf5),
+            raw_config,
+            ..DchuConfig::default()
+        }
+    }
+
+    fn snapshot_with_config(config: DchuConfig) -> HardwareSnapshot {
+        let mut snapshot = HardwareSnapshot::from_status_bytes(&[]);
+        snapshot.dchu_config = Some(config);
+        snapshot
+    }
+
+    fn fan_mode_values(modes: &[FanModeOption]) -> Vec<&'static str> {
+        modes.iter().map(|mode| mode.value).collect()
+    }
+
+    fn power_mode_values(modes: &[PowerModeOption]) -> Vec<&'static str> {
+        modes.iter().map(|mode| mode.value).collect()
     }
 }
