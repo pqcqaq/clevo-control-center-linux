@@ -107,7 +107,6 @@ pub enum ControlPage {
     Overview,
     Lighting,
     Fan,
-    Performance,
     Diagnostics,
     Settings,
     Advanced,
@@ -119,7 +118,6 @@ impl ControlPage {
             Self::Overview => "总览",
             Self::Lighting => "灯光",
             Self::Fan => "风扇",
-            Self::Performance => "性能",
             Self::Diagnostics => "诊断",
             Self::Settings => "设置",
             Self::Advanced => "高级",
@@ -131,7 +129,6 @@ impl ControlPage {
             Self::Overview,
             Self::Lighting,
             Self::Fan,
-            Self::Performance,
             Self::Diagnostics,
             Self::Settings,
             Self::Advanced,
@@ -188,13 +185,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fan_page_is_between_lighting_and_performance() {
+    fn fan_page_is_between_lighting_and_diagnostics() {
         let pages = ControlPage::all();
         let lighting_index = pages
             .iter()
             .position(|page| *page == ControlPage::Lighting)
             .unwrap();
         assert_eq!(pages.get(lighting_index + 1), Some(&ControlPage::Fan));
+        assert_eq!(
+            pages.get(lighting_index + 2),
+            Some(&ControlPage::Diagnostics)
+        );
     }
 
     #[test]

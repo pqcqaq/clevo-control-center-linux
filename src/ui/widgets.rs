@@ -5,8 +5,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{
-    self, pos2, vec2, Align2, Button, Color32, Context, FontData, FontDefinitions, FontFamily,
-    FontId, Frame, Pos2, RichText, ScrollArea, Sense, Shape, Stroke, Ui,
+    self, pos2, vec2, Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId,
+    Frame, Pos2, RichText, ScrollArea, Sense, Shape, Stroke, Ui,
 };
 
 use super::app::ClevoLedApp;
@@ -204,54 +204,6 @@ fn draw_arc(
 
 fn point_on_circle(center: Pos2, radius: f32, angle: f32) -> Pos2 {
     center + vec2(angle.cos() * radius, angle.sin() * radius)
-}
-
-pub(super) fn control_group<F: FnMut(&str)>(
-    ui: &mut Ui,
-    title: &str,
-    items: &[(&str, &str)],
-    selected_value: Option<&str>,
-    mut action: F,
-) {
-    Frame::none()
-        .fill(Color32::from_rgb(35, 34, 30))
-        .rounding(10.0)
-        .inner_margin(egui::Margin::same(14.0))
-        .show(ui, |ui| {
-            ui.set_width(330.0);
-            ui.label(
-                RichText::new(title)
-                    .size(16.0)
-                    .strong()
-                    .color(Color32::from_rgb(236, 230, 218)),
-            );
-            ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                for (label, value) in items {
-                    let selected = selected_value == Some(*value);
-                    let fill = if selected {
-                        Color32::from_rgb(76, 54, 28)
-                    } else {
-                        Color32::from_rgb(45, 41, 34)
-                    };
-                    let stroke = if selected {
-                        Stroke::new(1.2, Color32::from_rgb(226, 166, 88))
-                    } else {
-                        Stroke::new(1.0, Color32::from_rgb(65, 58, 47))
-                    };
-                    if ui
-                        .add_sized(
-                            vec2(86.0, 32.0),
-                            Button::new(*label).fill(fill).stroke(stroke),
-                        )
-                        .clicked()
-                    {
-                        action(value);
-                    }
-                }
-            });
-        });
 }
 
 pub(super) fn command_panel(ui: &mut Ui, app: &mut ClevoLedApp) {
