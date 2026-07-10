@@ -1,5 +1,67 @@
 # 进度日志
 
+## 当前恢复入口
+
+换会话后先读 `AGENT_HANDOFF.md`。该文件记录当前代码结构、最新提交、验证命令、实机 GPU MUX 读回值、安全边界和暂不公开项。
+
+## 会话：2026-07-10
+
+### 阶段：控制中心能力对齐与实机确认
+- **状态：** complete
+- 执行的操作：
+  - 迁移到 `clevo-control-center-linux` 项目和 `clevo-control-center` 命名，移除旧 `clevo-keyboard-led` 兼容命令和打包残留。
+  - 按用户要求重构 UI：左侧 sidebar 为唯一导航，去掉顶部 tab、蓝色斜线背景、首页裸固件信息和重复按钮。
+  - 修复启动后默认状态读取，GUI 从服务/只读 DCHU 状态拿数据，不依赖手动刷新和 sudo。
+  - 首页改为风扇仪表盘 + 灯光摘要 + 电源模式 + 风扇模式；CPU/GPU 两路默认显示，第三路 tach 有数据时显示 PCH。
+  - 参考原厂和 `clevo-indicator` 修正风扇 tach：`RPM = 2156220 / raw_tach`。
+  - 从 EC 状态 buffer 解析温度，首页展示确认度高的 CPU/GPU 温度，高级页展示所有温度样字段。
+  - 对齐原厂电源/风扇模式读写：AppSettings `1:1` 读电源模式，`4:5` 读风扇模式；Linux 只做这两个字段的受限运行时镜像。
+  - 新增“风扇”页面，本地编辑三组 CPU/GPU 自定义曲线；总览页选择曲线时才通过 `fan-curve` 写 EC 并切换 custom。
+  - 新增“电池”页面，目前只保存本地策略配置，不写 EC。
+  - 去掉“性能”侧边栏页面，性能/电源模式保留在首页。
+  - 逆向原厂 FnKey/ControlCenter/FanSpeedSetting，记录 GPU MUX、风扇曲线、能力位、GPU OC、Battery Saver 等链路到 `findings.md`。
+  - 新增 `/proc/clevo_dchu_config` 的只读 GPU MUX 回读：`WMI4/sub8` capability 和 `WMI4/sub21` status/options。
+  - 实机确认本机不走旧 `PSF2 bit20` MUX，而走新四状态 `WMI4/sub8 offset18 bit0`。
+  - 新增 `AGENT_HANDOFF.md` 作为后续会话恢复手册。
+- 创建/修改的关键文件：
+  - `AGENT_HANDOFF.md`
+  - `README.md`
+  - `DCHU_ADJUSTMENTS.md`
+  - `findings.md`
+  - `module/clevo_control_center.c`
+  - `src/dchu.rs`
+  - `src/ui/advanced.rs`
+  - `src/ui/pages.rs`
+  - `src/ui/fan.rs`
+  - `src/ui/battery.rs`
+  - `src/fan_curve.rs`
+  - `src/battery_strategy.rs`
+- 最近已推送提交：
+  - `e029ef1 Expose GPU MUX capability readback`
+  - `67c1c22 Apply custom fan curves through DCHU`
+  - `e8e95d7 Disable unchanged fan curve actions`
+  - `b994bd6 Stabilize fan curve action layout`
+  - `d9482b8 Clean up fan curve page layout`
+  - `f9ea343 Add local battery strategy page`
+- 2026-07-10 实机 GPU MUX 读回：
+  - `psf2_7a = 0x70020053`
+  - `bios_feature_04_08_version = 0x0100`
+  - `bios_feature_04_08_offset18 = 0x4d`
+  - `gpu_mux_04_15_current = 0x02`
+  - `gpu_mux_04_15_options = 0x06`
+- 验证：
+  - Windows 本地 `cargo fmt --check` 通过。
+  - Windows 本地 `cargo check` 通过。
+  - Windows 本地 `cargo test` 通过。
+  - Linux 笔记本 `cargo check` 通过。
+  - Linux 笔记本 `cargo test` 通过。
+  - Linux 笔记本 `make -C module` 通过。
+  - Linux 笔记本加载新模块后 `/proc/clevo_dchu_config` 读回 MUX 数据成功。
+- 安全边界：
+  - `/proc/clevo_dchu_control` 只接受 `fan-mode`、`power-mode`、`fan-curve`。
+  - 不公开 MUX/GPU OC/CPU OC/Battery Saver/EnergySave/AntiDust 写入口。
+  - 不记录任何密码或 token。
+
 ## 会话：2026-07-08
 
 ### 阶段 1：需求与发现

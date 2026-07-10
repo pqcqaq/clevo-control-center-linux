@@ -22,7 +22,7 @@ ACPI 路径：
 
 `/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。左侧“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
 
-`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 会按原厂能力位决定控制项是否可见：电源模式看 `PSF5 bit0`，风扇设置看 `PSF5 bit7`，Silent 看 `PSF2 bit15`，MaxQ 看 `0x0D[0x0E] == 5`。MUX、超频、电池策略等只在“高级”页面只读展示能力，不作为写入控件公开。
+`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数、GPU MUX 新接口 capability/status/options，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 会按原厂能力位决定控制项是否可见：电源模式看 `PSF5 bit0`，风扇设置看 `PSF5 bit7`，Silent 看 `PSF2 bit15`，MaxQ 看 `0x0D[0x0E] == 5`。MUX、超频、电池策略等只在“高级”页面只读展示能力，不作为写入控件公开。
 
 `/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode`、`power-mode` 和 `fan-curve` 命令。它会按原厂顺序同步受限 AppSettings 状态，但不接受任意 DCHU function、任意 AppSettings offset 或裸数据。
 
@@ -214,7 +214,7 @@ GUI 页面：
 - 电池：本地电池策略开关、标准/保养/续航预设、充电阈值和低电量策略配置
 - 诊断：读取 DCHU 只读状态
 - 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
-- 高级：风扇 raw/解析值、温度块、受限 AppSettings 模式状态、官方能力位解析和其他 DCHU raw 状态
+- 高级：风扇 raw/解析值、温度块、受限 AppSettings 模式状态、GPU MUX 只读回读、官方能力位解析和其他 DCHU raw 状态
 
 自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
 
