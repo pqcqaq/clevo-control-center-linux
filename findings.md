@@ -150,4 +150,7 @@
   - 风扇模式读 `ReadAppSettings(4, 5, 1)`。
   - turbo fan 状态读 `ReadAppSettings(4, 8, 1)`。
 - 反汇编 `InsydeDCHU.dll` 确认 `ReadAppSettings/WriteAppSettings` 走 Windows `AcpiBridge` 设备的另一路 IOCTL `0x32240c`，读写 0x1000 字节的 AppSettings 区；这不是当前 Linux `_DSM` 直接读到的 `0x0C/0x0D` EC buffer。
-- 因此 Linux GUI 不应把 `0x0D[0x0E]` 当作电源/风扇选中态。除非后续可靠复刻 AppSettings 通道，否则只能展示写入按钮，不做虚假的硬件读回高亮。
+  - `ReadAppSettings(page, offset, length)` 先通过 IOCTL 读取 0x1000 字节 AppSettings 区，再从 `page * 0x100 + offset` 复制 `length` 字节。
+  - `WriteAppSettings(page, offset, length, data)` 发送 `{op=1, offset=page * 0x100 + offset, length, data...}` 到同一个 IOCTL。
+- Linux 模块不开放完整 AppSettings 空间，只实现原厂当前模式读回所需的白名单字段：`page=1 offset=1` 电源模式、`page=4 offset=5` 风扇模式。写 `fan-mode` 成功后按原厂顺序同步 `SetAPPData(4,5,1)`；写 `power-mode` 时先同步 `WriteAppSettings(1,1,1)` 再写 `SCMD(0x79, sub=0x19)`，硬件写失败会回滚该字段，避免 GUI 显示未生效状态。
+- 因此 Linux GUI 不应把 `0x0D[0x0E]` 当作电源/风扇选中态；按钮高亮只来自受限 AppSettings 兼容层。

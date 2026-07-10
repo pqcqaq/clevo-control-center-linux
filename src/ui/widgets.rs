@@ -210,6 +210,7 @@ pub(super) fn control_group<F: FnMut(&str)>(
     ui: &mut Ui,
     title: &str,
     items: &[(&str, &str)],
+    selected_value: Option<&str>,
     mut action: F,
 ) {
     Frame::none()
@@ -228,8 +229,22 @@ pub(super) fn control_group<F: FnMut(&str)>(
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                 for (label, value) in items {
+                    let selected = selected_value == Some(*value);
+                    let fill = if selected {
+                        Color32::from_rgb(76, 54, 28)
+                    } else {
+                        Color32::from_rgb(45, 41, 34)
+                    };
+                    let stroke = if selected {
+                        Stroke::new(1.2, Color32::from_rgb(226, 166, 88))
+                    } else {
+                        Stroke::new(1.0, Color32::from_rgb(65, 58, 47))
+                    };
                     if ui
-                        .add_sized(vec2(86.0, 32.0), Button::new(*label))
+                        .add_sized(
+                            vec2(86.0, 32.0),
+                            Button::new(*label).fill(fill).stroke(stroke),
+                        )
                         .clicked()
                     {
                         action(value);

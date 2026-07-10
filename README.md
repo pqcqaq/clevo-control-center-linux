@@ -22,9 +22,9 @@ ACPI 路径：
 
 `/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。左侧“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
 
-`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer 以及 `PSF1/PSF2/PSF4/PSF5` 能力整数。GUI 用它判断是否展示本机 DSDT 明确支持的风扇模式，并在“高级”页面展示 `FANQ`、`KBTP` 和 raw config。
+`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 用它判断是否展示本机 DSDT 明确支持的风扇模式，并在“高级”页面展示 `FANQ`、`KBTP`、AppSettings 状态和 raw config。
 
-`/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它不接受任意 DCHU function 或裸数据。
+`/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它会按原厂顺序同步受限 AppSettings 状态，但不接受任意 DCHU function、任意 AppSettings offset 或裸数据。
 
 ## 目录结构
 
@@ -187,11 +187,12 @@ echo 'power-mode 2' > /proc/clevo_dchu_control
 
 ```bash
 target/release/clevo-control-center dchu status
+target/release/clevo-control-center dchu app-settings
 target/release/clevo-control-center dchu fan-mode auto --i-understand
 target/release/clevo-control-center dchu power-mode 2 --i-understand
 ```
 
-`dchu status` 读取 `/proc/clevo_dchu_status`，通常不需要 root。`fan-mode` 和 `power-mode` 写入 `/proc/clevo_dchu_control`，普通用户可用。CLI 不再提供裸 DCHU 调试入口。
+`dchu status` 读取 `/proc/clevo_dchu_status`，`dchu app-settings` 读取受限 AppSettings 模式状态，通常不需要 root。`fan-mode` 和 `power-mode` 写入 `/proc/clevo_dchu_control`，普通用户可用。CLI 不再提供裸 DCHU 调试入口。
 
 ## GUI 和后台服务
 
@@ -208,7 +209,7 @@ GUI 页面：
 - 性能：DCHU 电源模式和风扇模式按钮
 - 诊断：读取 DCHU 只读状态
 - 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
-- 高级：风扇 raw/解析值、温度块和其他 DCHU 0x0C raw 状态
+- 高级：风扇 raw/解析值、温度块、受限 AppSettings 模式状态和其他 DCHU raw 状态
 
 自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
 

@@ -121,6 +121,14 @@ pub(super) fn other_info(ui: &mut Ui, snapshot: Option<&HardwareSnapshot>) {
             ui.label(snapshot.battery_rate_raw.to_string());
             ui.end_row();
             if let Some(config) = &snapshot.dchu_config {
+                ui.label("AppSettings power mode");
+                ui.monospace("page 1 offset 1");
+                ui.label(format_optional_u8(config.app_power_mode));
+                ui.end_row();
+                ui.label("AppSettings fan mode");
+                ui.monospace("page 4 offset 5");
+                ui.label(format_optional_u8(config.app_fan_mode));
+                ui.end_row();
                 ui.label("fanq");
                 ui.monospace("0x0d[0x0c]");
                 ui.label(format_optional_u8(config.fanq));

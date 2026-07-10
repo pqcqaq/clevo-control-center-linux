@@ -85,6 +85,10 @@ pub struct DchuConfig {
     #[serde(default)]
     pub psf5: Option<u32>,
     #[serde(default)]
+    pub app_power_mode: Option<u8>,
+    #[serde(default)]
+    pub app_fan_mode: Option<u8>,
+    #[serde(default)]
     pub raw_config: Vec<u8>,
 }
 
@@ -231,6 +235,14 @@ pub fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> {
             config.psf5 = Some(parse_u32_hex(value, "psf5_10")?);
             continue;
         }
+        if let Some(value) = line.strip_prefix("app_power_mode ") {
+            config.app_power_mode = parse_optional_u8(value, "app_power_mode")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("app_fan_mode ") {
+            config.app_fan_mode = parse_optional_u8(value, "app_fan_mode")?;
+            continue;
+        }
         if line.starts_with("psf") {
             continue;
         }
@@ -250,6 +262,17 @@ pub fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> {
 
 fn parse_u32_hex(value: &str, label: &str) -> Result<u32, String> {
     u32::from_str_radix(value.trim(), 16).map_err(|_| format!("invalid {label} integer"))
+}
+
+fn parse_optional_u8(value: &str, label: &str) -> Result<Option<u8>, String> {
+    let value = value.trim();
+    if value == "unknown" {
+        return Ok(None);
+    }
+    value
+        .parse::<u8>()
+        .map(Some)
+        .map_err(|_| format!("invalid {label} value"))
 }
 
 fn dchu_status_buffer() -> Result<Vec<u8>, String> {
@@ -336,19 +359,34 @@ pub fn available_fan_modes(snapshot: Option<&HardwareSnapshot>) -> &'static [Fan
 }
 
 pub fn selected_fan_mode_from_snapshot(
-    _snapshot: Option<&HardwareSnapshot>,
+    snapshot: Option<&HardwareSnapshot>,
 ) -> Option<&'static str> {
-    // OEM UI reads fan selection from DCHU AppSettings page 4 offset 5.
-    // The 0x0D[0x0E] EC flag is coupled with power mode writes, so it is not a safe selection source.
-    None
+    match snapshot
+        .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        .and_then(|config| config.app_fan_mode)
+    {
+        Some(0) => Some("auto"),
+        Some(1) => Some("max"),
+        Some(3) => Some("silent"),
+        Some(5) => Some("maxq"),
+        Some(6) => Some("custom"),
+        _ => None,
+    }
 }
 
 pub fn selected_power_mode_from_snapshot(
-    _snapshot: Option<&HardwareSnapshot>,
+    snapshot: Option<&HardwareSnapshot>,
 ) -> Option<&'static str> {
-    // OEM UI reads power selection from DCHU AppSettings page 1 offset 1.
-    // Do not infer it from the coupled EC flag exposed in config_0d[0x0E].
-    None
+    match snapshot
+        .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        .and_then(|config| config.app_power_mode)
+    {
+        Some(0) => Some("0"),
+        Some(1) => Some("1"),
+        Some(2) => Some("2"),
+        Some(3) => Some("3"),
+        _ => None,
+    }
 }
 
 fn require_danger_flag(args: &[String]) -> Result<(), String> {
@@ -362,6 +400,7 @@ fn require_danger_flag(args: &[String]) -> Result<(), String> {
 pub fn print_dchu_usage() {
     println!("Usage:");
     println!("  clevo-control-center dchu status");
+    println!("  clevo-control-center dchu app-settings");
     println!(
         "  clevo-control-center dchu fan-mode <auto|max|silent|maxq|custom|0|1|3|5|6> --i-understand"
     );
@@ -453,6 +492,25 @@ fn run_power_mode(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn print_app_settings() -> Result<(), String> {
+    let config = read_dchu_config()?;
+    println!(
+        "power_mode: {}",
+        config
+            .app_power_mode
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_owned())
+    );
+    println!(
+        "fan_mode: {}",
+        config
+            .app_fan_mode
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_owned())
+    );
+    Ok(())
+}
+
 pub fn parse_power_mode(value: &str) -> Result<u32, String> {
     let mode = value
         .parse::<u32>()
@@ -471,6 +529,7 @@ pub fn run_dchu_cli(args: &[String]) -> Result<(), String> {
 
     match command {
         "status" => print_status(&dchu_status_buffer()?),
+        "app-settings" => print_app_settings()?,
         "fan-mode" => {
             require_danger_flag(args)?;
             run_fan_mode(args.get(1).ok_or("fan-mode requires <mode>")?)?;
@@ -579,7 +638,9 @@ mod tests {
              psf5_10 integer 0x93\n\
              psf1_52 integer 0x4680025\n\
              psf4_60 integer 0x21c\n\
-             psf2_7a integer 0x70020053\n",
+             psf2_7a integer 0x70020053\n\
+             app_power_mode 2\n\
+             app_fan_mode 3\n",
         )
         .unwrap();
 
@@ -590,6 +651,8 @@ mod tests {
         assert_eq!(config.psf1, Some(0x0468_0025));
         assert_eq!(config.psf4, Some(0x021c));
         assert_eq!(config.psf2, Some(0x7002_0053));
+        assert_eq!(config.app_power_mode, Some(2));
+        assert_eq!(config.app_fan_mode, Some(3));
         assert_eq!(config.raw_config.len(), 32);
     }
 
@@ -603,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn does_not_select_fan_mode_from_coupled_ec_flag() {
+    fn selects_fan_mode_from_app_settings_only() {
         let mut snapshot = HardwareSnapshot::from_status_bytes(&[]);
         snapshot.dchu_config = Some(DchuConfig {
             mode_status: Some(0x10),
@@ -613,19 +676,27 @@ mod tests {
 
         snapshot.dchu_config = Some(DchuConfig {
             mode_status: Some(0x08),
+            app_fan_mode: Some(3),
             ..DchuConfig::default()
         });
-        assert_eq!(selected_fan_mode_from_snapshot(Some(&snapshot)), None);
+        assert_eq!(
+            selected_fan_mode_from_snapshot(Some(&snapshot)),
+            Some("silent")
+        );
 
         snapshot.dchu_config = Some(DchuConfig {
             mode_status: Some(0x02),
+            app_fan_mode: Some(5),
             ..DchuConfig::default()
         });
-        assert_eq!(selected_fan_mode_from_snapshot(Some(&snapshot)), None);
+        assert_eq!(
+            selected_fan_mode_from_snapshot(Some(&snapshot)),
+            Some("maxq")
+        );
     }
 
     #[test]
-    fn does_not_select_power_mode_from_coupled_ec_flag() {
+    fn selects_power_mode_from_app_settings_only() {
         let mut snapshot = HardwareSnapshot::from_status_bytes(&[]);
         snapshot.dchu_config = Some(DchuConfig {
             mode_status: Some(0x80),
@@ -635,15 +706,23 @@ mod tests {
 
         snapshot.dchu_config = Some(DchuConfig {
             mode_status: Some(0x08),
+            app_power_mode: Some(2),
             ..DchuConfig::default()
         });
-        assert_eq!(selected_power_mode_from_snapshot(Some(&snapshot)), None);
+        assert_eq!(
+            selected_power_mode_from_snapshot(Some(&snapshot)),
+            Some("2")
+        );
 
         snapshot.dchu_config = Some(DchuConfig {
             mode_status: Some(0x02),
+            app_power_mode: Some(3),
             ..DchuConfig::default()
         });
-        assert_eq!(selected_power_mode_from_snapshot(Some(&snapshot)), None);
+        assert_eq!(
+            selected_power_mode_from_snapshot(Some(&snapshot)),
+            Some("3")
+        );
     }
 
     #[test]

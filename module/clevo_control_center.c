@@ -13,6 +13,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/proc_fs.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
@@ -21,9 +22,13 @@
 #define DCHU_CONTROL_PROC_NAME "clevo_dchu_control"
 #define DCHU_CONFIG_PROC_NAME "clevo_dchu_config"
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
+#define DCHU_APP_SETTINGS_PROC_NAME "clevo_dchu_app_settings"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
 #define DCHU_BUFFER_SIZE 0x100
+#define DCHU_APP_SETTINGS_SIZE 0x1000
+#define DCHU_APP_POWER_MODE_OFFSET ((1u << 8) + 1u)
+#define DCHU_APP_FAN_MODE_OFFSET ((4u << 8) + 5u)
 #define DCHU_MAX_OUTPUT (DCHU_BUFFER_SIZE * 3 + 128)
 
 static const guid_t dchu_guid =
@@ -34,7 +39,12 @@ static struct proc_dir_entry *led_proc_entry;
 static struct proc_dir_entry *dchu_control_proc_entry;
 static struct proc_dir_entry *dchu_config_proc_entry;
 static struct proc_dir_entry *dchu_status_proc_entry;
+static struct proc_dir_entry *dchu_app_settings_proc_entry;
 static acpi_handle dchu_handle;
+static u8 dchu_app_settings[DCHU_APP_SETTINGS_SIZE];
+static bool dchu_app_power_mode_valid;
+static bool dchu_app_fan_mode_valid;
+static DEFINE_MUTEX(dchu_app_settings_lock);
 static bool verbose;
 
 struct dchu_result {
@@ -267,6 +277,36 @@ static int parse_fan_mode_name(const char *value, u32 *mode)
 	return 0;
 }
 
+static bool dchu_fan_mode_allowed(u32 mode)
+{
+	switch (mode) {
+	case 0:
+	case 1:
+	case 3:
+	case 5:
+	case 6:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void clevo_dchu_app_write_byte(u32 page, u32 offset, u8 value)
+{
+	u32 app_offset = (page << 8) + offset;
+
+	if (app_offset >= sizeof(dchu_app_settings))
+		return;
+
+	mutex_lock(&dchu_app_settings_lock);
+	dchu_app_settings[app_offset] = value;
+	if (app_offset == DCHU_APP_POWER_MODE_OFFSET)
+		dchu_app_power_mode_valid = true;
+	else if (app_offset == DCHU_APP_FAN_MODE_OFFSET)
+		dchu_app_fan_mode_valid = true;
+	mutex_unlock(&dchu_app_settings_lock);
+}
+
 static int clevo_dchu_set_fan_mode(const char *value)
 {
 	u32 mode;
@@ -277,25 +317,22 @@ static int clevo_dchu_set_fan_mode(const char *value)
 	if (ret)
 		return ret;
 
-	switch (mode) {
-	case 0:
-	case 1:
-	case 3:
-	case 5:
-	case 6:
-		break;
-	default:
+	if (!dchu_fan_mode_allowed(mode))
 		return -EINVAL;
-	}
 
 	payload = (0x01u << 24) | mode;
-	return clevo_dchu_eval(0x79, (u8 *)&payload, sizeof(payload), NULL);
+	ret = clevo_dchu_eval(0x79, (u8 *)&payload, sizeof(payload), NULL);
+	if (!ret)
+		clevo_dchu_app_write_byte(4, 5, (u8)mode);
+	return ret;
 }
 
 static int clevo_dchu_set_power_mode(const char *value)
 {
 	u32 mode;
 	u32 payload;
+	u8 old_mode;
+	bool old_valid;
 	int ret;
 
 	ret = kstrtou32(value, 10, &mode);
@@ -304,8 +341,21 @@ static int clevo_dchu_set_power_mode(const char *value)
 	if (mode > 3)
 		return -EINVAL;
 
+	mutex_lock(&dchu_app_settings_lock);
+	old_mode = dchu_app_settings[DCHU_APP_POWER_MODE_OFFSET];
+	old_valid = dchu_app_power_mode_valid;
+	mutex_unlock(&dchu_app_settings_lock);
+
+	clevo_dchu_app_write_byte(1, 1, (u8)mode);
 	payload = (0x19u << 24) | mode;
-	return clevo_dchu_eval(0x79, (u8 *)&payload, sizeof(payload), NULL);
+	ret = clevo_dchu_eval(0x79, (u8 *)&payload, sizeof(payload), NULL);
+	if (ret) {
+		mutex_lock(&dchu_app_settings_lock);
+		dchu_app_settings[DCHU_APP_POWER_MODE_OFFSET] = old_mode;
+		dchu_app_power_mode_valid = old_valid;
+		mutex_unlock(&dchu_app_settings_lock);
+	}
+	return ret;
 }
 
 static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ubuf,
@@ -358,13 +408,62 @@ static const struct proc_ops clevo_dchu_control_proc_ops = {
 	.proc_write = clevo_dchu_control_write,
 };
 
+static size_t clevo_dchu_app_settings_format(char *output, size_t output_size)
+{
+	size_t offset = 0;
+	bool power_valid;
+	bool fan_valid;
+	u8 power_mode;
+	u8 fan_mode;
+
+	mutex_lock(&dchu_app_settings_lock);
+	power_valid = dchu_app_power_mode_valid;
+	fan_valid = dchu_app_fan_mode_valid;
+	power_mode = dchu_app_settings[DCHU_APP_POWER_MODE_OFFSET];
+	fan_mode = dchu_app_settings[DCHU_APP_FAN_MODE_OFFSET];
+	mutex_unlock(&dchu_app_settings_lock);
+
+	offset += scnprintf(output + offset, output_size - offset,
+			    "app_power_mode ");
+	if (power_valid)
+		offset += scnprintf(output + offset, output_size - offset,
+				    "%u\n", power_mode);
+	else
+		offset += scnprintf(output + offset, output_size - offset,
+				    "unknown\n");
+
+	offset += scnprintf(output + offset, output_size - offset,
+			    "app_fan_mode ");
+	if (fan_valid)
+		offset += scnprintf(output + offset, output_size - offset,
+				    "%u\n", fan_mode);
+	else
+		offset += scnprintf(output + offset, output_size - offset,
+				    "unknown\n");
+
+	return offset;
+}
+
+static ssize_t clevo_dchu_app_settings_read(struct file *file, char __user *ubuf,
+					    size_t count, loff_t *ppos)
+{
+	char output[96];
+	size_t len = clevo_dchu_app_settings_format(output, sizeof(output));
+
+	return simple_read_from_buffer(ubuf, count, ppos, output, len);
+}
+
+static const struct proc_ops clevo_dchu_app_settings_proc_ops = {
+	.proc_read = clevo_dchu_app_settings_read,
+};
+
 static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
 				      size_t count, loff_t *ppos)
 {
 	struct dchu_result config = { 0 };
 	struct dchu_result feature = { 0 };
 	char *output;
-	size_t output_size = DCHU_MAX_OUTPUT + 256;
+	size_t output_size = DCHU_MAX_OUTPUT + 384;
 	size_t offset = 0;
 	int ret;
 
@@ -394,6 +493,7 @@ static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
 	if (ret)
 		goto out;
 	offset += scnprintf(output + offset, output_size - offset, "psf2_7a %s", feature.text);
+	offset += clevo_dchu_app_settings_format(output + offset, output_size - offset);
 
 	ret = simple_read_from_buffer(ubuf, count, ppos, output, offset);
 
@@ -462,14 +562,25 @@ static int __init clevo_control_center_init(void)
 		return -ENOMEM;
 	}
 
-	pr_info("clevo_control_center: loaded, LED at /proc/%s; DCHU status at /proc/%s; DCHU config at /proc/%s; DCHU control at /proc/%s\n",
+	dchu_app_settings_proc_entry = proc_create(DCHU_APP_SETTINGS_PROC_NAME, 0444, NULL,
+						   &clevo_dchu_app_settings_proc_ops);
+	if (!dchu_app_settings_proc_entry) {
+		proc_remove(dchu_config_proc_entry);
+		proc_remove(dchu_status_proc_entry);
+		proc_remove(dchu_control_proc_entry);
+		proc_remove(led_proc_entry);
+		return -ENOMEM;
+	}
+
+	pr_info("clevo_control_center: loaded, LED at /proc/%s; DCHU status at /proc/%s; DCHU config at /proc/%s; DCHU control at /proc/%s; DCHU app settings at /proc/%s\n",
 		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_CONFIG_PROC_NAME,
-		DCHU_CONTROL_PROC_NAME);
+		DCHU_CONTROL_PROC_NAME, DCHU_APP_SETTINGS_PROC_NAME);
 	return 0;
 }
 
 static void __exit clevo_control_center_exit(void)
 {
+	proc_remove(dchu_app_settings_proc_entry);
 	proc_remove(dchu_config_proc_entry);
 	proc_remove(dchu_status_proc_entry);
 	proc_remove(dchu_control_proc_entry);

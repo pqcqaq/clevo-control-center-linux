@@ -601,14 +601,21 @@ fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
             ui,
             "电源模式",
             &[("安静", "0"), ("省电", "1"), ("性能", "2"), ("娱乐", "3")],
+            selected_power_mode_from_snapshot(app.hardware.as_ref()),
             |mode| {
                 app.run_dchu_write(&["power-mode", mode, "--i-understand"]);
             },
         );
         let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
-        control_group(ui, "风扇模式", &fan_modes, |mode| {
-            app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
-        });
+        control_group(
+            ui,
+            "风扇模式",
+            &fan_modes,
+            selected_fan_mode_from_snapshot(app.hardware.as_ref()),
+            |mode| {
+                app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
+            },
+        );
     });
     ui.add_space(12.0);
     command_panel(ui, app);
