@@ -5,7 +5,7 @@ use super::app::ClevoLedApp;
 use super::widgets::{
     color_swatch, command_panel, control_group, fan_gauge, hardware_details, page_header,
 };
-use crate::dchu::{FanStatus, HardwareSnapshot};
+use crate::dchu::{available_fan_modes, FanStatus, HardwareSnapshot};
 use crate::model::{AdvancedTab, ControlPage, Mode, ALL_ZONES};
 
 const GAUGE_GAP: f32 = 8.0;
@@ -102,18 +102,19 @@ fn overview_controls(ui: &mut Ui, app: &mut ClevoLedApp) {
         |mode| app.run_dchu_write(&["power-mode", mode, "--i-understand"]),
     );
     ui.add_space(12.0);
-    overview_button_row(
-        ui,
-        "风扇模式",
-        &[
-            ("自动", "auto"),
-            ("最大", "max"),
-            ("静音", "silent"),
-            ("MaxQ", "maxq"),
-            ("Turbo", "turbo"),
-        ],
-        |mode| app.run_dchu_write(&["fan-mode", mode, "--i-understand"]),
-    );
+    let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
+    overview_button_row(ui, "风扇模式", &fan_modes, |mode| {
+        app.run_dchu_write(&["fan-mode", mode, "--i-understand"])
+    });
+}
+
+fn overview_fan_mode_items(
+    snapshot: Option<&HardwareSnapshot>,
+) -> Vec<(&'static str, &'static str)> {
+    available_fan_modes(snapshot)
+        .iter()
+        .map(|mode| (mode.label, mode.value))
+        .collect()
 }
 
 fn overview_button_row<F: FnMut(&str)>(
@@ -348,20 +349,10 @@ fn performance_page(ui: &mut Ui, app: &mut ClevoLedApp) {
                 app.run_dchu_write(&["power-mode", mode, "--i-understand"]);
             },
         );
-        control_group(
-            ui,
-            "风扇模式",
-            &[
-                ("自动", "auto"),
-                ("最大", "max"),
-                ("静音", "silent"),
-                ("MaxQ", "maxq"),
-                ("Turbo", "turbo"),
-            ],
-            |mode| {
-                app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
-            },
-        );
+        let fan_modes = overview_fan_mode_items(app.hardware.as_ref());
+        control_group(ui, "风扇模式", &fan_modes, |mode| {
+            app.run_dchu_write(&["fan-mode", mode, "--i-understand"]);
+        });
     });
     ui.add_space(12.0);
     command_panel(ui, app);

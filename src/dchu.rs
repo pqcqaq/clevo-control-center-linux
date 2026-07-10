@@ -4,9 +4,50 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_DCHU_CONTROL_PROC_PATH: &str = "/proc/clevo_dchu_control";
+const DEFAULT_DCHU_CONFIG_PROC_PATH: &str = "/proc/clevo_dchu_config";
 const DEFAULT_DCHU_STATUS_PROC_PATH: &str = "/proc/clevo_dchu_status";
 // Clevo EC reports fan tach period counters; higher real RPM means smaller raw values.
 const FAN_RPM_DIVISOR: u32 = 2_156_220;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FanModeOption {
+    pub label: &'static str,
+    pub value: &'static str,
+}
+
+const SAFE_FAN_MODES: [FanModeOption; 3] = [
+    FanModeOption {
+        label: "自动",
+        value: "auto",
+    },
+    FanModeOption {
+        label: "最大",
+        value: "max",
+    },
+    FanModeOption {
+        label: "MaxQ",
+        value: "maxq",
+    },
+];
+
+const CONFIGURED_FAN_MODES: [FanModeOption; 4] = [
+    FanModeOption {
+        label: "自动",
+        value: "auto",
+    },
+    FanModeOption {
+        label: "最大",
+        value: "max",
+    },
+    FanModeOption {
+        label: "静音",
+        value: "silent",
+    },
+    FanModeOption {
+        label: "MaxQ",
+        value: "maxq",
+    },
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FanStatus {
@@ -27,6 +68,24 @@ pub struct TemperatureSensor {
     pub celsius: Option<u8>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DchuConfig {
+    #[serde(default)]
+    pub fanq: Option<u8>,
+    #[serde(default)]
+    pub kbtp: Option<u8>,
+    #[serde(default)]
+    pub psf1: Option<u32>,
+    #[serde(default)]
+    pub psf2: Option<u32>,
+    #[serde(default)]
+    pub psf4: Option<u32>,
+    #[serde(default)]
+    pub psf5: Option<u32>,
+    #[serde(default)]
+    pub raw_config: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HardwareSnapshot {
     pub fans: Vec<FanStatus>,
@@ -34,6 +93,8 @@ pub struct HardwareSnapshot {
     pub temperature_sensors: Vec<TemperatureSensor>,
     #[serde(default)]
     pub raw_status: Vec<u8>,
+    #[serde(default)]
+    pub dchu_config: Option<DchuConfig>,
     pub battery_voltage_raw: u16,
     pub battery_rate_raw: u16,
     pub thermal_raw: [u8; 4],
@@ -56,6 +117,7 @@ impl HardwareSnapshot {
             fans,
             temperature_sensors: temperature_sensors(bytes),
             raw_status: bytes.to_vec(),
+            dchu_config: None,
             battery_voltage_raw: get_be_u16(bytes, 0x08),
             battery_rate_raw: get_be_u16(bytes, 0x0e),
             thermal_raw: [
@@ -90,6 +152,12 @@ fn dchu_control_proc_path() -> std::path::PathBuf {
     std::env::var_os("CLEVO_DCHU_CONTROL_PROC")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(DEFAULT_DCHU_CONTROL_PROC_PATH))
+}
+
+fn dchu_config_proc_path() -> std::path::PathBuf {
+    std::env::var_os("CLEVO_DCHU_CONFIG_PROC")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(DEFAULT_DCHU_CONFIG_PROC_PATH))
 }
 
 fn dchu_status_proc_path() -> std::path::PathBuf {
@@ -137,6 +205,50 @@ pub fn parse_dchu_buffer_reply(text: &str) -> Result<Vec<u8>, String> {
     Err(format!("DCHU status did not return buffer: {first}"))
 }
 
+pub fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> {
+    let mut config = DchuConfig::default();
+    let mut hex_lines = Vec::new();
+
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if line.starts_with("config_0d buffer ") {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("psf1_52 integer 0x") {
+            config.psf1 = Some(parse_u32_hex(value, "psf1_52")?);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("psf2_7a integer 0x") {
+            config.psf2 = Some(parse_u32_hex(value, "psf2_7a")?);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("psf4_60 integer 0x") {
+            config.psf4 = Some(parse_u32_hex(value, "psf4_60")?);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("psf5_10 integer 0x") {
+            config.psf5 = Some(parse_u32_hex(value, "psf5_10")?);
+            continue;
+        }
+        if line.starts_with("psf") {
+            continue;
+        }
+        hex_lines.push(line);
+    }
+
+    if hex_lines.is_empty() {
+        return Err("DCHU config did not return config_0d buffer".to_owned());
+    }
+
+    config.raw_config = parse_hex_bytes(&hex_lines.join(" "))?;
+    config.fanq = config.raw_config.get(0x0c).copied();
+    config.kbtp = config.raw_config.get(0x0f).copied();
+    Ok(config)
+}
+
+fn parse_u32_hex(value: &str, label: &str) -> Result<u32, String> {
+    u32::from_str_radix(value.trim(), 16).map_err(|_| format!("invalid {label} integer"))
+}
+
 fn dchu_status_buffer() -> Result<Vec<u8>, String> {
     let path = dchu_status_proc_path();
     let text = fs::read_to_string(&path)
@@ -144,9 +256,18 @@ fn dchu_status_buffer() -> Result<Vec<u8>, String> {
     parse_dchu_buffer_reply(&text)
 }
 
+fn read_dchu_config() -> Result<DchuConfig, String> {
+    let path = dchu_config_proc_path();
+    let text = fs::read_to_string(&path)
+        .map_err(|err| format!("read {} failed: {err}", path.display()))?;
+    parse_dchu_config_reply(&text)
+}
+
 pub fn read_hardware_snapshot() -> Result<HardwareSnapshot, String> {
     let status = dchu_status_buffer()?;
-    Ok(HardwareSnapshot::from_status_bytes(&status))
+    let mut snapshot = HardwareSnapshot::from_status_bytes(&status);
+    snapshot.dchu_config = read_dchu_config().ok();
+    Ok(snapshot)
 }
 
 fn get_be_u16(bytes: &[u8], offset: usize) -> u16 {
@@ -200,6 +321,17 @@ fn print_status(bytes: &[u8]) {
     );
 }
 
+pub fn available_fan_modes(snapshot: Option<&HardwareSnapshot>) -> &'static [FanModeOption] {
+    if snapshot
+        .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        .is_some()
+    {
+        &CONFIGURED_FAN_MODES
+    } else {
+        &SAFE_FAN_MODES
+    }
+}
+
 fn require_danger_flag(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--i-understand") {
         Ok(())
@@ -212,7 +344,7 @@ pub fn print_dchu_usage() {
     println!("Usage:");
     println!("  clevo-control-center dchu status");
     println!(
-        "  clevo-control-center dchu fan-mode <auto|max|silent|maxq|custom|turbo|0|1|3|5|6|7> --i-understand"
+        "  clevo-control-center dchu fan-mode <auto|max|silent|maxq|custom|0|1|2|5|6> --i-understand"
     );
     println!("  clevo-control-center dchu power-mode <0..3> --i-understand");
 }
@@ -221,19 +353,17 @@ pub fn parse_fan_mode(value: &str) -> Result<u32, String> {
     match value {
         "auto" => Ok(0),
         "max" => Ok(1),
-        "silent" => Ok(3),
+        "silent" => Ok(2),
         "maxq" => Ok(5),
         "custom" => Ok(6),
-        "turbo" => Ok(7),
         _ => {
             let mode = value
                 .parse::<u32>()
                 .map_err(|_| "fan mode must be a known name or decimal value".to_owned())?;
             match mode {
-                0 | 1 | 3 | 5 | 6 | 7 => Ok(mode),
+                0 | 1 | 2 | 5 | 6 => Ok(mode),
                 _ => Err(
-                    "fan mode must be one of auto/max/silent/maxq/custom/turbo or 0/1/3/5/6/7"
-                        .to_owned(),
+                    "fan mode must be one of auto/max/silent/maxq/custom or 0/1/2/5/6".to_owned(),
                 ),
             }
         }
@@ -410,13 +540,37 @@ mod tests {
     fn parses_dchu_fan_modes() {
         assert_eq!(parse_fan_mode("auto").unwrap(), 0);
         assert_eq!(parse_fan_mode("max").unwrap(), 1);
-        assert_eq!(parse_fan_mode("silent").unwrap(), 3);
+        assert_eq!(parse_fan_mode("silent").unwrap(), 2);
         assert_eq!(parse_fan_mode("maxq").unwrap(), 5);
         assert_eq!(parse_fan_mode("custom").unwrap(), 6);
-        assert_eq!(parse_fan_mode("turbo").unwrap(), 7);
         assert_eq!(parse_fan_mode("0").unwrap(), 0);
-        assert!(parse_fan_mode("2").is_err());
+        assert_eq!(parse_fan_mode("2").unwrap(), 2);
+        assert!(parse_fan_mode("3").is_err());
+        assert!(parse_fan_mode("7").is_err());
+        assert!(parse_fan_mode("turbo").is_err());
         assert!(parse_fan_mode("0x1").is_err());
+    }
+
+    #[test]
+    fn parses_dchu_config_reply() {
+        let config = parse_dchu_config_reply(
+            "config_0d buffer 32\n\
+             00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 06\n\
+             10 20 30 40 50 60 70 80 00 00 00 00 00 00 00 00\n\
+             psf5_10 integer 0x93\n\
+             psf1_52 integer 0x4680025\n\
+             psf4_60 integer 0x21c\n\
+             psf2_7a integer 0x70020053\n",
+        )
+        .unwrap();
+
+        assert_eq!(config.fanq, Some(0x02));
+        assert_eq!(config.kbtp, Some(0x06));
+        assert_eq!(config.psf5, Some(0x93));
+        assert_eq!(config.psf1, Some(0x0468_0025));
+        assert_eq!(config.psf4, Some(0x021c));
+        assert_eq!(config.psf2, Some(0x7002_0053));
+        assert_eq!(config.raw_config.len(), 32);
     }
 
     #[test]

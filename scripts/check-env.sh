@@ -63,6 +63,16 @@ else
     printf '[warn] /proc/clevo_dchu_status not found; rebuild and reload module/clevo_control_center.ko\n'
 fi
 
+if [[ -e /proc/clevo_dchu_config ]]; then
+    if [[ -r /proc/clevo_dchu_config ]]; then
+        printf '[ok] /proc/clevo_dchu_config is readable\n'
+    else
+        printf '[warn] /proc/clevo_dchu_config exists but is not readable by this user\n'
+    fi
+else
+    printf '[warn] /proc/clevo_dchu_config not found; rebuild and reload module/clevo_control_center.ko\n'
+fi
+
 if [[ -e /proc/clevo_dchu_control ]]; then
     if [[ -w /proc/clevo_dchu_control ]]; then
         printf '[ok] /proc/clevo_dchu_control is writable\n'

@@ -120,6 +120,32 @@ pub(super) fn other_info(ui: &mut Ui, snapshot: Option<&HardwareSnapshot>) {
             ui.monospace("0x0e..0x0f");
             ui.label(snapshot.battery_rate_raw.to_string());
             ui.end_row();
+            if let Some(config) = &snapshot.dchu_config {
+                ui.label("fanq");
+                ui.monospace("0x0d[0x0c]");
+                ui.label(format_optional_u8(config.fanq));
+                ui.end_row();
+                ui.label("kbtp");
+                ui.monospace("0x0d[0x0f]");
+                ui.label(format_optional_u8(config.kbtp));
+                ui.end_row();
+                ui.label("psf1_52");
+                ui.monospace("0x52");
+                ui.label(format_optional_u32_hex(config.psf1));
+                ui.end_row();
+                ui.label("psf2_7a");
+                ui.monospace("0x7a");
+                ui.label(format_optional_u32_hex(config.psf2));
+                ui.end_row();
+                ui.label("psf4_60");
+                ui.monospace("0x60");
+                ui.label(format_optional_u32_hex(config.psf4));
+                ui.end_row();
+                ui.label("psf5_10");
+                ui.monospace("0x10");
+                ui.label(format_optional_u32_hex(config.psf5));
+                ui.end_row();
+            }
         });
 
     ui.add_space(12.0);
@@ -149,6 +175,26 @@ pub(super) fn other_info(ui: &mut Ui, snapshot: Option<&HardwareSnapshot>) {
                 ui.monospace(status_hex_dump(&snapshot.raw_status));
             });
         });
+
+    if let Some(config) = &snapshot.dchu_config {
+        ui.add_space(12.0);
+        ui.label(
+            RichText::new("完整 DCHU 0x0D config raw buffer")
+                .size(13.0)
+                .strong()
+                .color(Color32::from_rgb(222, 214, 199)),
+        );
+        ui.add_space(6.0);
+        Frame::none()
+            .fill(Color32::from_rgb(18, 17, 15))
+            .rounding(8.0)
+            .inner_margin(egui::Margin::same(10.0))
+            .show(ui, |ui| {
+                ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    ui.monospace(status_hex_dump(&config.raw_config));
+                });
+            });
+    }
 }
 
 fn empty(ui: &mut Ui) {
@@ -171,6 +217,18 @@ fn table_header(ui: &mut Ui, label: &str) {
 fn format_temperature(value: Option<u8>) -> String {
     value
         .map(|temp| format!("{temp}°C"))
+        .unwrap_or_else(|| "--".to_owned())
+}
+
+fn format_optional_u8(value: Option<u8>) -> String {
+    value
+        .map(|value| format!("0x{value:02x} / {value}"))
+        .unwrap_or_else(|| "--".to_owned())
+}
+
+fn format_optional_u32_hex(value: Option<u32>) -> String {
+    value
+        .map(|value| format!("0x{value:08x}"))
         .unwrap_or_else(|| "--".to_owned())
 }
 

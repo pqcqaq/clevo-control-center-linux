@@ -22,6 +22,8 @@ ACPI 路径：
 
 `/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。左侧“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
 
+`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer 以及 `PSF1/PSF2/PSF4/PSF5` 能力整数。GUI 用它判断是否展示本机 DSDT 明确支持的风扇模式，并在“高级”页面展示 `FANQ`、`KBTP` 和 raw config。
+
 `/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode` 和 `power-mode` 命令。它不接受任意 DCHU function 或裸数据。
 
 ## 目录结构
@@ -175,11 +177,11 @@ echo 'f2 0000ff' > /proc/clevo_control_center_led
 
 ```bash
 echo 'fan-mode auto' > /proc/clevo_dchu_control
-echo 'fan-mode turbo' > /proc/clevo_dchu_control
+echo 'fan-mode silent' > /proc/clevo_dchu_control
 echo 'power-mode 2' > /proc/clevo_dchu_control
 ```
 
-`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|turbo|0|1|3|5|6|7>` 和 `power-mode <0..3>`。其他命令、额外参数和越界值会被内核模块拒绝。
+`/proc/clevo_dchu_control` 只接受 `fan-mode <auto|max|silent|maxq|custom|0|1|2|5|6>` 和 `power-mode <0..3>`。当前机器 DSDT 中 `fan-mode 3` 是空操作，`fan-mode 7` 没有处理分支，所以不再公开为有效模式。其他命令、额外参数和越界值会被内核模块拒绝。
 
 ## DCHU CLI
 

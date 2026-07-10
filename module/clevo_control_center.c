@@ -14,10 +14,12 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
+#include <linux/slab.h>
 #include <linux/uaccess.h>
 
 #define LED_PROC_NAME "clevo_control_center_led"
 #define DCHU_CONTROL_PROC_NAME "clevo_dchu_control"
+#define DCHU_CONFIG_PROC_NAME "clevo_dchu_config"
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
@@ -30,6 +32,7 @@ static const guid_t dchu_guid =
 
 static struct proc_dir_entry *led_proc_entry;
 static struct proc_dir_entry *dchu_control_proc_entry;
+static struct proc_dir_entry *dchu_config_proc_entry;
 static struct proc_dir_entry *dchu_status_proc_entry;
 static acpi_handle dchu_handle;
 static bool verbose;
@@ -252,13 +255,11 @@ static int parse_fan_mode_name(const char *value, u32 *mode)
 	} else if (!strcmp(value, "max")) {
 		*mode = 1;
 	} else if (!strcmp(value, "silent")) {
-		*mode = 3;
+		*mode = 2;
 	} else if (!strcmp(value, "maxq")) {
 		*mode = 5;
 	} else if (!strcmp(value, "custom")) {
 		*mode = 6;
-	} else if (!strcmp(value, "turbo")) {
-		*mode = 7;
 	} else {
 		return kstrtou32(value, 10, mode);
 	}
@@ -279,10 +280,9 @@ static int clevo_dchu_set_fan_mode(const char *value)
 	switch (mode) {
 	case 0:
 	case 1:
-	case 3:
+	case 2:
 	case 5:
 	case 6:
-	case 7:
 		break;
 	default:
 		return -EINVAL;
@@ -346,7 +346,8 @@ static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
 	const char *help =
 		"Usage:\n"
 		"  echo 'fan-mode auto' > /proc/clevo_dchu_control\n"
-		"  echo 'fan-mode turbo' > /proc/clevo_dchu_control\n"
+		"  echo 'fan-mode max' > /proc/clevo_dchu_control\n"
+		"  echo 'fan-mode silent' > /proc/clevo_dchu_control\n"
 		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n";
 
 	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
@@ -355,6 +356,54 @@ static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
 static const struct proc_ops clevo_dchu_control_proc_ops = {
 	.proc_read = clevo_dchu_control_read,
 	.proc_write = clevo_dchu_control_write,
+};
+
+static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
+				      size_t count, loff_t *ppos)
+{
+	struct dchu_result config = { 0 };
+	struct dchu_result feature = { 0 };
+	char *output;
+	size_t output_size = DCHU_MAX_OUTPUT + 256;
+	size_t offset = 0;
+	int ret;
+
+	output = kzalloc(output_size, GFP_KERNEL);
+	if (!output)
+		return -ENOMEM;
+
+	ret = clevo_dchu_eval(0x0d, NULL, 0, &config);
+	if (ret)
+		goto out;
+
+	offset += scnprintf(output + offset, output_size - offset, "config_0d ");
+	offset += scnprintf(output + offset, output_size - offset, "%s", config.text);
+	ret = clevo_dchu_eval(0x10, NULL, 0, &feature);
+	if (ret)
+		goto out;
+	offset += scnprintf(output + offset, output_size - offset, "psf5_10 %s", feature.text);
+	ret = clevo_dchu_eval(0x52, NULL, 0, &feature);
+	if (ret)
+		goto out;
+	offset += scnprintf(output + offset, output_size - offset, "psf1_52 %s", feature.text);
+	ret = clevo_dchu_eval(0x60, NULL, 0, &feature);
+	if (ret)
+		goto out;
+	offset += scnprintf(output + offset, output_size - offset, "psf4_60 %s", feature.text);
+	ret = clevo_dchu_eval(0x7a, NULL, 0, &feature);
+	if (ret)
+		goto out;
+	offset += scnprintf(output + offset, output_size - offset, "psf2_7a %s", feature.text);
+
+	ret = simple_read_from_buffer(ubuf, count, ppos, output, offset);
+
+out:
+	kfree(output);
+	return ret;
+}
+
+static const struct proc_ops clevo_dchu_config_proc_ops = {
+	.proc_read = clevo_dchu_config_read,
 };
 
 static ssize_t clevo_dchu_status_read(struct file *file, char __user *ubuf,
@@ -404,13 +453,24 @@ static int __init clevo_control_center_init(void)
 		return -ENOMEM;
 	}
 
-	pr_info("clevo_control_center: loaded, LED at /proc/%s; DCHU status at /proc/%s; DCHU control at /proc/%s\n",
-		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_CONTROL_PROC_NAME);
+	dchu_config_proc_entry = proc_create(DCHU_CONFIG_PROC_NAME, 0444, NULL,
+					     &clevo_dchu_config_proc_ops);
+	if (!dchu_config_proc_entry) {
+		proc_remove(dchu_status_proc_entry);
+		proc_remove(dchu_control_proc_entry);
+		proc_remove(led_proc_entry);
+		return -ENOMEM;
+	}
+
+	pr_info("clevo_control_center: loaded, LED at /proc/%s; DCHU status at /proc/%s; DCHU config at /proc/%s; DCHU control at /proc/%s\n",
+		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_CONFIG_PROC_NAME,
+		DCHU_CONTROL_PROC_NAME);
 	return 0;
 }
 
 static void __exit clevo_control_center_exit(void)
 {
+	proc_remove(dchu_config_proc_entry);
 	proc_remove(dchu_status_proc_entry);
 	proc_remove(dchu_control_proc_entry);
 	proc_remove(led_proc_entry);
