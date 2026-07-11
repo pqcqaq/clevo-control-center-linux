@@ -24,6 +24,9 @@
 #define DCHU_CONFIG_PROC_NAME "clevo_dchu_config"
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_APP_SETTINGS_PROC_NAME "clevo_dchu_app_settings"
+#define MODULE_VERSION_PROC_NAME "clevo_control_center_version"
+#define CLEVO_MODULE_API_VERSION 3
+#define CLEVO_MODULE_API_VERSION_STRING "3"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
 #define DCHU_BUFFER_SIZE 0x100
@@ -51,6 +54,7 @@ static struct proc_dir_entry *dchu_control_proc_entry;
 static struct proc_dir_entry *dchu_config_proc_entry;
 static struct proc_dir_entry *dchu_status_proc_entry;
 static struct proc_dir_entry *dchu_app_settings_proc_entry;
+static struct proc_dir_entry *module_version_proc_entry;
 static acpi_handle dchu_handle;
 static u8 dchu_app_settings[DCHU_APP_SETTINGS_SIZE];
 static bool dchu_app_power_mode_valid;
@@ -579,6 +583,36 @@ static int clevo_dchu_set_fan_curve(char *cpu_value, char *gpu_value)
 	return clevo_dchu_set_fan_mode("custom");
 }
 
+static int parse_gpu_mux_mode_name(const char *value, u8 *mode)
+{
+	if (!strcmp(value, "dgpu") || !strcmp(value, "discrete") ||
+	    !strcmp(value, "2")) {
+		*mode = 2;
+		return 0;
+	}
+	if (!strcmp(value, "mshybrid") || !strcmp(value, "hybrid") ||
+	    !strcmp(value, "3")) {
+		*mode = 3;
+		return 0;
+	}
+	return -EINVAL;
+}
+
+static int clevo_dchu_set_gpu_mux(const char *value)
+{
+	u8 target;
+	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
+	int ret;
+
+	ret = parse_gpu_mux_mode_name(value, &target);
+	if (ret)
+		return ret;
+
+	payload[0] = 22;
+	payload[1] = target;
+	return clevo_dchu_eval(0x04, payload, sizeof(payload), NULL);
+}
+
 static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ubuf,
 					size_t count, loff_t *ppos)
 {
@@ -614,6 +648,10 @@ static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ub
 		if (matched != 3)
 			return -EINVAL;
 		ret = clevo_dchu_set_fan_curve(value, value2);
+	} else if (!strcmp(command, "gpu-mux")) {
+		if (matched != 2)
+			return -EINVAL;
+		ret = clevo_dchu_set_gpu_mux(value);
 	} else {
 		return -EINVAL;
 	}
@@ -630,7 +668,9 @@ static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
 		"  echo 'fan-mode max' > /proc/clevo_dchu_control\n"
 		"  echo 'fan-mode silent' > /proc/clevo_dchu_control\n"
 		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n"
-		"  echo 'fan-curve 40:28,58:42,78:72,100:100 42:25,60:44,80:74,100:100' > /proc/clevo_dchu_control\n";
+		"  echo 'fan-curve 40:28,58:42,78:72,100:100 42:25,60:44,80:74,100:100' > /proc/clevo_dchu_control\n"
+		"  echo 'gpu-mux dgpu' > /proc/clevo_dchu_control\n"
+		"  echo 'gpu-mux mshybrid' > /proc/clevo_dchu_control\n";
 
 	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
 }
@@ -762,6 +802,21 @@ static const struct proc_ops clevo_dchu_status_proc_ops = {
 	.proc_read = clevo_dchu_status_read,
 };
 
+static ssize_t clevo_module_version_read(struct file *file, char __user *ubuf,
+					 size_t count, loff_t *ppos)
+{
+	char output[48];
+	size_t len;
+
+	len = scnprintf(output, sizeof(output), "api_version %u\n",
+			CLEVO_MODULE_API_VERSION);
+	return simple_read_from_buffer(ubuf, count, ppos, output, len);
+}
+
+static const struct proc_ops clevo_module_version_proc_ops = {
+	.proc_read = clevo_module_version_read,
+};
+
 static int __init clevo_control_center_init(void)
 {
 	acpi_status status;
@@ -773,14 +828,22 @@ static int __init clevo_control_center_init(void)
 		return -ENODEV;
 	}
 
-	led_proc_entry = proc_create(LED_PROC_NAME, 0666, NULL, &clevo_led_proc_ops);
-	if (!led_proc_entry)
+	module_version_proc_entry = proc_create(MODULE_VERSION_PROC_NAME, 0444, NULL,
+						&clevo_module_version_proc_ops);
+	if (!module_version_proc_entry)
 		return -ENOMEM;
 
+	led_proc_entry = proc_create(LED_PROC_NAME, 0666, NULL, &clevo_led_proc_ops);
+	if (!led_proc_entry) {
+		proc_remove(module_version_proc_entry);
+		return -ENOMEM;
+	}
+
 	dchu_control_proc_entry = proc_create(DCHU_CONTROL_PROC_NAME, 0666, NULL,
-					      &clevo_dchu_control_proc_ops);
+						  &clevo_dchu_control_proc_ops);
 	if (!dchu_control_proc_entry) {
 		proc_remove(led_proc_entry);
+		proc_remove(module_version_proc_entry);
 		return -ENOMEM;
 	}
 
@@ -789,6 +852,7 @@ static int __init clevo_control_center_init(void)
 	if (!dchu_status_proc_entry) {
 		proc_remove(dchu_control_proc_entry);
 		proc_remove(led_proc_entry);
+		proc_remove(module_version_proc_entry);
 		return -ENOMEM;
 	}
 
@@ -798,6 +862,7 @@ static int __init clevo_control_center_init(void)
 		proc_remove(dchu_status_proc_entry);
 		proc_remove(dchu_control_proc_entry);
 		proc_remove(led_proc_entry);
+		proc_remove(module_version_proc_entry);
 		return -ENOMEM;
 	}
 
@@ -808,12 +873,15 @@ static int __init clevo_control_center_init(void)
 		proc_remove(dchu_status_proc_entry);
 		proc_remove(dchu_control_proc_entry);
 		proc_remove(led_proc_entry);
+		proc_remove(module_version_proc_entry);
 		return -ENOMEM;
 	}
 
-	pr_info("clevo_control_center: loaded, LED at /proc/%s; DCHU status at /proc/%s; DCHU config at /proc/%s; DCHU control at /proc/%s; DCHU app settings at /proc/%s\n",
+	pr_info("clevo_control_center: loaded api_version=%u, LED at /proc/%s; DCHU status at /proc/%s; DCHU config at /proc/%s; DCHU control at /proc/%s; DCHU app settings at /proc/%s; version at /proc/%s\n",
+		CLEVO_MODULE_API_VERSION,
 		LED_PROC_NAME, DCHU_STATUS_PROC_NAME, DCHU_CONFIG_PROC_NAME,
-		DCHU_CONTROL_PROC_NAME, DCHU_APP_SETTINGS_PROC_NAME);
+		DCHU_CONTROL_PROC_NAME, DCHU_APP_SETTINGS_PROC_NAME,
+		MODULE_VERSION_PROC_NAME);
 	return 0;
 }
 
@@ -824,6 +892,7 @@ static void __exit clevo_control_center_exit(void)
 	proc_remove(dchu_status_proc_entry);
 	proc_remove(dchu_control_proc_entry);
 	proc_remove(led_proc_entry);
+	proc_remove(module_version_proc_entry);
 	pr_info("clevo_control_center: unloaded\n");
 }
 
@@ -833,3 +902,4 @@ module_exit(clevo_control_center_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Codex");
 MODULE_DESCRIPTION("Clevo/BlueSky control center ACPI bridge");
+MODULE_VERSION(CLEVO_MODULE_API_VERSION_STRING);

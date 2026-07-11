@@ -108,6 +108,7 @@ pub enum ControlPage {
     Lighting,
     Fan,
     Battery,
+    Gpu,
     Diagnostics,
     Settings,
     Advanced,
@@ -120,6 +121,7 @@ impl ControlPage {
             Self::Lighting => "灯光",
             Self::Fan => "风扇",
             Self::Battery => "电池",
+            Self::Gpu => "显卡",
             Self::Diagnostics => "诊断",
             Self::Settings => "设置",
             Self::Advanced => "高级",
@@ -132,6 +134,7 @@ impl ControlPage {
             Self::Lighting,
             Self::Fan,
             Self::Battery,
+            Self::Gpu,
             Self::Diagnostics,
             Self::Settings,
             Self::Advanced,
@@ -188,7 +191,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fan_and_battery_pages_are_between_lighting_and_diagnostics() {
+    fn hardware_pages_are_between_lighting_and_diagnostics() {
         let pages = ControlPage::all();
         let lighting_index = pages
             .iter()
@@ -196,8 +199,9 @@ mod tests {
             .unwrap();
         assert_eq!(pages.get(lighting_index + 1), Some(&ControlPage::Fan));
         assert_eq!(pages.get(lighting_index + 2), Some(&ControlPage::Battery));
+        assert_eq!(pages.get(lighting_index + 3), Some(&ControlPage::Gpu));
         assert_eq!(
-            pages.get(lighting_index + 3),
+            pages.get(lighting_index + 4),
             Some(&ControlPage::Diagnostics)
         );
     }

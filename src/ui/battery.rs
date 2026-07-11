@@ -115,7 +115,7 @@ fn capability_chip(ui: &mut Ui, label: &str, value: Option<bool>) {
 }
 
 fn battery_meter(ui: &mut Ui, app: &ClevoLedApp) {
-    let width = ui.available_width().min(420.0).max(260.0);
+    let width = ui.available_width().clamp(260.0, 420.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, 54.0), Sense::hover());
     let painter = ui.painter_at(rect);
     let shell = Rect::from_min_max(

@@ -1,0 +1,13 @@
+{
+    "[rust]": {
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
+    },
+    "rust-analyzer.cargo.allFeatures": true,
+    "rust-analyzer.check.allTargets": true,
+    "rust-analyzer.check.command": "check",
+    "rust-analyzer.files.excludeDirs": [
+        "target",
+        "dist",
+        "packaging/deb/build"
+    ]
+}

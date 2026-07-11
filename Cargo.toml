@@ -5,6 +5,9 @@ edition = "2021"
 description = "Clevo/BlueSky control center for Linux"
 license = "GPL-2.0"
 
+[lints.rust]
+unsafe_code = "forbid"
+
 [dependencies]
 eframe = "0.29"
 egui = "0.29"

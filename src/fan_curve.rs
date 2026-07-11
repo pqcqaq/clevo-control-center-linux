@@ -168,9 +168,8 @@ impl FanCurveSettings {
             .into_iter()
             .map(FanCurveProfile::sanitized)
             .collect();
-        if !self.enabled {
-            self.selected_profile = None;
-        } else if !matches!(self.selected_profile, Some(index) if index < FAN_CURVE_COUNT) {
+        if !self.enabled || !matches!(self.selected_profile, Some(index) if index < FAN_CURVE_COUNT)
+        {
             self.selected_profile = None;
         }
         self

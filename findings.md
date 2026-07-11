@@ -1,5 +1,95 @@
 # 发现与决策
 
+## 2026-07-11 结构重构原则
+
+- 模块边界按业务能力命名：`overview`、`gpu`、`lighting`、`dchu::cli`、`dchu::parsing`。
+- 不新增 `helpers.rs`、`utils.rs`、`common.rs` 等无业务语义容器；只在确有多个调用方且语义稳定时共享函数。
+- 大段 egui 矢量绘制与对应 GPU 页面保持在同一模块，避免把每个小图形拆成碎片文件。
+- 内核模块 C 文件目前 905 行但职责集中于同一 Kbuild 模块，除非审计发现清晰边界，否则不为追求行数拆分。
+- `ui/pages.rs` 的自然边界已确认：
+  - `overview.rs` 完整拥有风扇仪表盘、控制矩阵、模式按钮和对应测试。
+  - `lighting.rs` 完整拥有灯光页面及局部 slider；不再为一个 slider 新建组件文件。
+  - `gpu.rs` 完整拥有 MUX 页面、模式卡片及两套矢量绘图。
+  - 高级页入口应并入已有 `ui/advanced.rs`，避免高级页面逻辑分散在两个模块。
+  - `pages.rs` 保留页面分发以及体量较小、同属系统工具的诊断/设置页面。
+- GPU 页面从状态条到 5090/MUX 两套绘图共享同一交互状态和配色，整体迁入 `gpu.rs`；不拆 `gpu_visuals` 或小型绘图 helper 文件。
+- 诊断与设置页面合计体量较小，继续放在 `pages.rs`，避免为两个短页面制造额外导航层。
+- UI 页面拆分已落地并验证；测试随总览模块迁移，公开入口只提升到父模块可见性，没有改变应用外部 API。
+- `dchu.rs` 的自然边界：
+  - 根模块保留领域类型、能力位解释、模式选项与选中态判断。
+  - `dchu/io.rs` 负责 proc 路径、文本/十六进制解析、硬件快照和温度/转速解码。
+  - `dchu/cli.rs` 负责危险标志校验、白名单写入、曲线参数与 CLI 分发。
+  - `dchu/tests.rs` 保留跨能力、解析和 CLI 的集成式单元测试，可访问父模块私有边界。
+- `fan_rpm_from_tach` 与温度解析属于硬件 I/O 解码，不应留在 CLI 模块。
+- DCHU 已按上述 root/io/cli/tests 边界完成拆分，并通过严格 Clippy 与 66 项测试；根模块仅继续公开应用实际依赖的接口。
+- `ui/app.rs` 当前 655 行，明显职责块集中在：应用状态与命令执行、外部设置/硬件同步、eframe 生命周期、窗口框架与 GPU MUX 确认交互。是否拆分应以这些职责能否独立拥有状态和测试为准，而不是只按行数。
+- `settings.rs` 与 `service.rs` 的静默错误主要分为两类：读取不存在/损坏文件时使用默认值的 best-effort 路径，以及目录创建、PID 写入、过期锁清理失败等会影响运行可靠性的路径。后者值得增加可诊断日志，前者应保留容错语义。
+- `load_settings` 在服务循环中高频调用，不能对每次缺失/解析失败直接打印日志，否则损坏配置会造成日志洪泛；它继续返回经过净化的默认设置更合适。硬件快照读取和文件 mtime 查询同样属于轮询型 best-effort 路径。
+- `ensure_service_running` 的日志目录创建、日志文件打开和 PID 文件写入失败目前完全静默，会让“服务启动但无日志/无法被发现”难以诊断；这些是一次性启动路径，适合直接输出错误。
+- `ServiceLock::acquire` 清理过期锁失败会直接导致下一轮笼统报 `stale service lock`，应保留具体 I/O 错误；`Drop` 清理则只能 best-effort，但非 `NotFound` 错误值得记录。
+- `ui/app.rs` 存在两个足够稳定、不是小 helper 的子职责：设置/硬件快照的轮询与持久化，以及 eframe 窗口生命周期/标题栏/MUX 重启确认。应用状态和用户动作仍应留在 `app.rs`，以免把相互依赖的业务状态拆碎。
+- 推荐结构为 `ui/app.rs`（状态、构造、业务动作）、`ui/app/persistence.rs`（外部状态同步与原子保存）、`ui/app/window.rs`（eframe 生命周期与窗口级交互）。子模块可访问父模块私有状态，不需要为了拆分扩大 crate 公开 API。
+- 上述应用层结构已落地。只有页面/控件实际调用的 `mark_settings_dirty` 与 `persist_settings_if_due` 使用 `pub(in crate::ui)`；轮询、应用外部设置和窗口位置同步仍限制在 `app` 子树内。
+- 全仓复盘未发现 `TODO/FIXME/HACK` 或生产代码 `unwrap/expect`。现有 `unwrap` 均在测试中；`.ok()` 主要用于可选的 proc/config/font/module 探测，需按调用频率和降级语义判断，不能机械改成日志。
+- 当前较大的 Rust 文件是 `ui/pages/gpu.rs` 657 行、`ui/advanced.rs` 544 行、`ui/widgets.rs` 535 行、`ui/pages/overview.rs` 510 行和 `dchu/tests.rs` 488 行。GPU/overview 已确认是高内聚页面，DCHU 测试集中便于跨边界验证；下一步只需复核 advanced/widgets 是否混合了可独立业务组件。
+- `ui/advanced.rs` 的三个展示入口共享同一硬件快照、状态字节解释和格式化规则，拆散会增加跨模块协议知识，继续保持单模块更可维护。
+- `ui/widgets.rs` 确实混合了三组独立组件：风扇仪表盘绘制、原生颜色选择器、通用页面/诊断控件。前两组各自约百余行且有独立测试，是合理的组件边界；它们不是一两行 helper。
+- `module_loader.rs` 的 `.ok()` 用于候选路径和可选 proc 版本探测；对话框非零状态还需兼容“用户取消”，不应把所有非零都记录成错误。当前降级链路清楚，无需机械修改。
+- `widgets.rs` 的风扇仪表盘约 180 行，原生颜色选择器约 180 行，均包含绘制/平台交互、解析和测试，适合分别成为 `ui/fan_gauge.rs` 与 `ui/color_picker.rs`。通用页头、开关、命令输出、硬件详情和字体安装继续留在 `widgets.rs`。
+- README 的目录说明仍把 `dchu.rs` 描述成 proc/CLI/解析全集，也没有列出页面和应用子模块，已落后于当前结构；结构拆分完成后必须同步更新。
+- `fan_gauge.rs` 与 `color_picker.rs` 已完成迁移，测试随职责移动；`widgets.rs` 只保留跨页面基础控件、命令/硬件信息展示与字体安装。拆分后严格 Clippy 和 66 项测试通过。
+- 最终规模复核中，剩余超过 500 行的 `gpu.rs`、`overview.rs`、`advanced.rs` 都拥有单一页面/协议解释职责；继续拆分只会把绘制和协议知识碎片化，因此明确停止按行数拆分。
+- 本地 release 构建通过。应用子模块没有新增 crate 级公开 API；DCHU 根 re-export 仍只包含 CLI 应用入口、硬件快照读取和高级页需要的 tach 换算。
+- 远端恢复连接后确认其源码是本地重构前的较早版本；孤立的 `src/pages.rs` 与旧整页实现一致且未被 `main.rs`/模块树引用，可在同步时安全删除。
+- 最终部署后远端 `/proc/clevo_dchu_control` 已包含受保护的 `gpu-mux dgpu/mshybrid` 命令，说明运行中的 API 2 内核模块已是具备 MUX 写入口的版本；无需为相同 API 号强制重载。
+- 最终 MUX 实机读回为 `current=0x03`（MSHybrid）、`options=0x06`（dGPU/MSHybrid）。
+
+## 2026-07-11 硬件后端抽象
+
+- 现状中 `ui::app` 直接持有 `LedWriter`、直接读取 DCHU 快照并通过重启自身 CLI 写入 DCHU；后台服务也直接持有 `LedWriter` 和读取 DCHU。硬件传输细节因此分散在多个调用方。
+- 抽象目标是以一个 `hardware` 业务模块统一“灯光写入、快照读取、风扇/电源/MUX/曲线设置”；Linux 实现继续委托当前已验证的 `/proc` 与 DCHU I/O，暂不引入 Windows、FFI 或条件编译。
+- 后端契约应使用领域类型而不是 `/proc` 命令字符串：将现有 `FanModeOption`/`PowerModeOption` 收敛为 `FanMode`/`PowerMode` 枚举，`GpuMuxMode` 与 `FanCurveProfile` 可直接复用。
+- `ClevoLedApp` 适合持有 `Box<dyn HardwareBackend>`，由入口注入当前原生后端；后台服务和 DCHU CLI 也使用同一后端。这样未来增加平台工厂时不需要再次改 UI 业务代码。
+- `dchu::io` 继续拥有已验证的 proc 文本解析；Linux 后端直接拥有灯光命令序列化与写入，不为了抽象而搬动稳定 DCHU 协议代码。
+- 最终实现中灯光 proc 写入仅被 Linux 后端使用，因此连同原测试并入 `hardware/linux.rs`，删除根级 `led.rs`；DCHU 响应解析继续留在高内聚的 `dchu::io`。
+- GUI、服务和 CLI 均通过 `Box<dyn HardwareBackend>`/`&dyn HardwareBackend` 使用领域操作；CLI 的危险标志校验继续保留，GUI 的确认交互和内核白名单仍是原有安全边界。
+- 最终抽象未加入 Windows、FFI 或平台条件编译；`native_backend()` 当前只构造 Linux 后端。新增平台时只需实现同一领域契约并调整原生后端工厂。
+- 模块 API 版本必须随用户态依赖的 proc 能力变化递增。GPU MUX 写入口加入后继续报告 API 2 会让旧模块被加载器误判为兼容，现已将模块与加载器最低版本同步提升到 API 3。
+- 本次“显卡未知”的直接原因是安装版旧服务持续写入 `dchu_config=null` 快照；项目 release 已能直接读到 MUX 配置，必须同步安装目录二进制并重启服务才能消除覆盖。
+
+## 2026-07-11 代码质量审计
+
+- 用户反馈 VS Code 中有大量语法/质量警告，需要区分真实诊断与编辑器配置问题。
+- 当前仓库没有发现 `.vscode` 项目配置，也没有根目录 `rustfmt.toml` 或 `clippy.toml`。
+- 工作树已有大量未提交功能改动，不能用重置或覆盖方式清理告警。
+- 审计范围包括 Rust 用户态、C 内核模块、VS Code/rust-analyzer 与远端 Linux 构建。
+- 严格 `cargo clippy --all-targets --all-features -- -D warnings` 首轮失败，发现：
+  - `src/dchu.rs:246`：`iter().any()` 可用 `contains()`，属于低效/冗余写法。
+  - `src/dchu.rs:345`：连续 `str::replace` 可合并。
+  - `src/fan_curve.rs:171`：两个分支执行相同赋值，条件可合并。
+  - `src/ui/battery.rs:118` 与 `src/ui/pages.rs:150`：手写 min/max clamp。
+  - `src/ui/pages.rs:473`：测试模块位于文件中段，后面还有大量生产代码，触发 `items_after_test_module`，属于文件结构问题。
+- 这些问题不会阻止普通编译，但会被 rust-analyzer/Clippy 以黄色警告持续显示，符合用户观察。
+- 基线命令结果：
+  - `cargo fmt --check`：通过。
+  - `cargo check --all-targets --all-features`：通过。
+  - `cargo test --all-targets --all-features`：66 项通过。
+  - 远端 `make -B -C module W=1`：模块成功重编译，无 C 源码警告。
+  - 远端仅提示 `pahole` 当前版本 130、内核构建时版本 131；这是 BTF 工具版本环境差异，不是项目语法错误。
+- `.gitignore` 当前忽略整个 `/.vscode/`，仓库没有共享 rust-analyzer/C++ 配置。
+- 本地是 Windows，而 `module/clevo_control_center.c` 依赖远端 Linux 7.0.12 内核构建目录；如果 VS Code C/C++ 扩展在本地解析该文件，会因缺少内核头和 Kbuild 参数产生大量误报。
+- Rust 中的 `unwrap()` 基本集中在测试；生产代码主要风险不是 panic，而是多处 `.ok()` / `let _ =` 静默吞掉文件、锁、迁移和清理错误，需要进一步判断哪些是有意 best-effort、哪些应记录。
+- 首轮 Clippy 告警已用等价重构全部修复；严格 `cargo clippy --all-targets --all-features -- -D warnings` 已通过。
+- 文件规模显示明显结构债务：`src/dchu.rs` 1387 行、`src/ui/pages.rs` 1365 行、内核模块 C 文件 905 行、`src/ui/app.rs` 655 行。尤其 `pages.rs` 同时承担多个页面与大段矢量绘图，后续新增 UI 时应拆为 `overview/gpu/lighting/settings` 子模块。
+- `pages.rs` 的测试模块此前位于文件中段，现已移到末尾，消除生产代码散落在测试模块之后的问题。
+- Pedantic/Nursery 扫描产生约 226 条建议，其中主要是 `missing_const_for_fn`、数值转换、浮点测试比较、短变量名、文档和 `needless_pass_by_ref_mut`；这些是可选风格规则，不适合作为当前二进制应用的默认零警告门禁。
+- Pedantic 扫描发现一处值得修的真实边界问题：原生颜色选择器 `rgb(...)` 输出先解析成 `u16` 再 `as u8`。虽然已有 `<=255` 判断，现已改为逐通道 `u8::try_from`，同时拒绝越界值和多余通道，并补测试。
+- `cargo tree -d` 的重复版本仅为 eframe/arboard 传递依赖中的 `windows-sys/windows-targets` 两代版本，项目自身没有重复声明，无需手工干预 lockfile。
+- 新增共享 `.vscode/settings.json`：rust-analyzer 使用跨环境可用的 `cargo check`，覆盖全 target 和全 feature；没有关闭全局诊断，也不强制远端缺失的 rustfmt/clippy。
+- 新增 `.vscode/extensions.json` 推荐 rust-analyzer、Remote SSH、C/C++ 扩展；README 明确 Windows 本地与 Linux Kbuild 的诊断边界。
+- Cargo 配置新增 `unsafe_code = "forbid"`，当前 Rust 源码无 unsafe。
+- 远端 Kali 当前缺少 `cargo fmt` 和 `cargo clippy` 子命令；`cargo check/test/build --release` 均通过。共享 rust-analyzer 配置因此改用基础 `check`，避免 Remote SSH 会话产生工具缺失错误；严格 Clippy 仍作为已在 Windows 本地验证的手动门禁。
+
 ## 需求
 - 用户希望把 Windows C# 程序中通过 `InsydeDCHU.dll` 修改键盘灯光的能力移植到 Linux。
 - 目标硬件是 Linux 工作机 `qcqcqc@192.168.4.70`，DMI 显示为 `Notebook NP5x_NP6x_NP7xPNP`，BIOS 厂商 `INSYDE Corp.`，版本 `1.07.05`。

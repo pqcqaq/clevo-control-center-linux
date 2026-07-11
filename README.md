@@ -48,16 +48,38 @@ packaging/
   deb/                        Debian 包控制文件和安装钩子
 src/
   main.rs                     程序入口、CLI 分发和 GUI 启动
-  dchu.rs                     DCHU proc 读写、CLI 输出和硬件状态解析
+  dchu.rs                     DCHU 领域类型、能力位和可用模式
+  dchu/
+    io.rs                     proc I/O、响应解析和硬件快照解码
+    cli.rs                    受保护写入、参数校验和 CLI 分发
+    tests.rs                  DCHU 能力、解析和控制边界测试
+  hardware.rs                 硬件后端契约和原生后端工厂
+  hardware/
+    linux.rs                  Linux 灯光与 DCHU 后端实现
   effects.rs                  动态灯效颜色计算
-  led.rs                      键盘灯 proc 写入
   model.rs                    页面、灯效、颜色和分区领域模型
+  module_loader.rs            GUI 内核模块版本检查和认证加载
   service.rs                  后台灯效服务、PID/lock 和硬件状态缓存
   settings.rs                 配置路径、迁移、读写和硬件状态缓存文件
   battery_strategy.rs         本地电池策略配置模型和校验
   fan_curve.rs                本地风扇曲线配置模型和校验
-  ui/                         egui 应用状态、布局、页面和控件
+  ui/
+    app.rs                    应用状态和用户操作
+    app/                      设置/硬件同步与窗口生命周期
+    pages.rs                  页面分发、诊断和设置页
+    pages/                    总览、灯光和显卡业务页面
+    advanced.rs               DCHU 高级只读信息解释
+    fan.rs                    风扇曲线编辑页
+    battery.rs                本地电池策略页
+    fan_gauge.rs              风扇仪表盘组件和绘制
+    color_picker.rs           Linux 原生调色盘调用和结果解析
+    layout.rs                 侧边栏与主区域布局
+    widgets.rs                跨页面基础控件和字体安装
 ```
+
+模块按业务职责划分，不使用 `helpers.rs`、`utils.rs` 或 `common.rs` 收纳零散逻辑。页面专属绘制与交互保留在所属页面；只有具备独立状态、平台边界或测试职责的组件才单独成模块。
+
+GUI、后台服务和 DCHU CLI 只通过 `HardwareBackend` 执行硬件操作。当前 `native_backend()` 只返回 Linux 实现；`/proc` 路径、灯光命令序列化和 DCHU 控制文本不会进入 UI 或服务业务代码。该边界为后续平台实现预留，但当前项目不包含 Windows 后端或 DLL 调用。
 
 ## 环境要求
 
@@ -89,6 +111,27 @@ scripts/build.sh
 make -C module
 cargo build --release
 ```
+
+## 代码质量与 VS Code
+
+提交前建议运行完整 Rust 检查：
+
+```bash
+cargo fmt --check
+cargo check --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
+
+仓库提供共享 VS Code 配置：rust-analyzer 后台使用 `cargo check` 并覆盖全部 target 和 feature。没有强制保存时格式化或后台 Clippy，因为部分发行版会把 `rustfmt`、`clippy` 拆成未默认安装的独立软件包；安装对应组件后再手动运行上面的完整门禁。Pedantic/Nursery lint 不作为默认门禁，因为其中包含大量 `const fn`、浮点测试和 UI 数值转换等风格建议。
+
+`module/clevo_control_center.c` 是 Linux 内核模块，必须依赖目标机器当前内核的 Kbuild 头文件和生成配置。直接在 Windows 本地用 C/C++ 扩展打开时，`linux/*.h` 缺失及相关宏错误属于解析环境误报。检查该文件应通过 VS Code Remote SSH 打开 Linux 项目目录，并以以下命令为准：
+
+```bash
+make -B -C module W=1
+```
+
+如果只在 Windows 本地编辑 Rust，请不要为了消除内核 C 文件的红线而添加假的 Windows include path 或关闭整个工作区的诊断。
 
 构建完成后的主程序：
 

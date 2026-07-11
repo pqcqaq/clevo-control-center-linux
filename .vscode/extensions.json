@@ -1,0 +1,7 @@
+{
+    "recommendations": [
+        "rust-lang.rust-analyzer",
+        "ms-vscode-remote.remote-ssh",
+        "ms-vscode.cpptools"
+    ]
+}

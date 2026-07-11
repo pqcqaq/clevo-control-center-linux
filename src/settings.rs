@@ -151,9 +151,21 @@ fn migrate_legacy_settings(target: &Path) {
     };
 
     if let Some(parent) = target.parent() {
-        let _ = fs::create_dir_all(parent);
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "Failed to create settings directory {}: {err}",
+                parent.display()
+            );
+            return;
+        }
     }
-    let _ = fs::copy(legacy, target);
+    if let Err(err) = fs::copy(&legacy, target) {
+        eprintln!(
+            "Failed to migrate settings from {} to {}: {err}",
+            legacy.display(),
+            target.display()
+        );
+    }
 }
 
 pub fn load_settings(path: &Path) -> Settings {

@@ -1,13 +1,13 @@
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::dchu;
 use crate::effects::{colors_for_mode, cycles_per_second, tick_interval};
-use crate::led::LedWriter;
+use crate::hardware;
 use crate::model::{Mode, ZoneColor};
 use crate::settings::{
     atomic_write_hardware_snapshot, hardware_snapshot_path, load_settings, service_lock_path,
@@ -31,18 +31,34 @@ pub fn ensure_service_running() {
 
     let log_path = service_log_path();
     if let Some(parent) = log_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "Failed to create service log directory {}: {err}",
+                parent.display()
+            );
+        }
     }
-    let log = fs::OpenOptions::new()
+    let log = match fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
-        .ok();
-    let stdout = log
-        .as_ref()
-        .and_then(|file| file.try_clone().ok())
-        .map(Stdio::from)
-        .unwrap_or_else(Stdio::null);
+    {
+        Ok(file) => Some(file),
+        Err(err) => {
+            eprintln!("Failed to open service log {}: {err}", log_path.display());
+            None
+        }
+    };
+    let stdout = match log.as_ref() {
+        Some(file) => match file.try_clone() {
+            Ok(file) => Stdio::from(file),
+            Err(err) => {
+                eprintln!("Failed to clone service log handle: {err}");
+                Stdio::null()
+            }
+        },
+        None => Stdio::null(),
+    };
     let stderr = log.map(Stdio::from).unwrap_or_else(Stdio::null);
 
     match Command::new(exe)
@@ -53,7 +69,9 @@ pub fn ensure_service_running() {
         .spawn()
     {
         Ok(child) => {
-            let _ = write_pid_file(&service_pid_path(), child.id());
+            if let Err(err) = write_pid_file(&service_pid_path(), child.id()) {
+                eprintln!("Failed to record LED service PID: {err}");
+            }
         }
         Err(err) => eprintln!("Failed to start LED service: {err}"),
     }
@@ -104,10 +122,23 @@ impl ServiceLock {
                 .create_new(true)
                 .open(&path)
             {
-                Ok(file) => {
+                Ok(mut file) => {
                     let pid = std::process::id();
-                    fs::write(&path, format!("{pid}\n"))?;
-                    let _ = write_pid_file(&pid_path, pid);
+                    if let Err(err) = writeln!(file, "{pid}") {
+                        if let Err(cleanup_err) = fs::remove_file(&path) {
+                            eprintln!(
+                                "Failed to remove incomplete service lock {}: {cleanup_err}",
+                                path.display()
+                            );
+                        }
+                        return Err(err);
+                    }
+                    if let Err(err) = write_pid_file(&pid_path, pid) {
+                        eprintln!(
+                            "Failed to record service PID in {}: {err}",
+                            pid_path.display()
+                        );
+                    }
                     return Ok(Self { _file: file });
                 }
                 Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
@@ -117,8 +148,23 @@ impl ServiceLock {
                             "service already running",
                         ));
                     }
-                    let _ = fs::remove_file(&path);
-                    let _ = fs::remove_file(&pid_path);
+                    if let Err(cleanup_err) = fs::remove_file(&path) {
+                        return Err(io::Error::new(
+                            cleanup_err.kind(),
+                            format!(
+                                "failed to remove stale service lock {}: {cleanup_err}",
+                                path.display()
+                            ),
+                        ));
+                    }
+                    if let Err(cleanup_err) = fs::remove_file(&pid_path) {
+                        if cleanup_err.kind() != io::ErrorKind::NotFound {
+                            eprintln!(
+                                "Failed to remove stale service PID file {}: {cleanup_err}",
+                                pid_path.display()
+                            );
+                        }
+                    }
                 }
                 Err(err) => return Err(err),
             }
@@ -133,8 +179,25 @@ impl ServiceLock {
 
 impl Drop for ServiceLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(service_lock_path());
-        let _ = fs::remove_file(service_pid_path());
+        let lock_path = service_lock_path();
+        if let Err(err) = fs::remove_file(&lock_path) {
+            if err.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "Failed to remove service lock {}: {err}",
+                    lock_path.display()
+                );
+            }
+        }
+
+        let pid_path = service_pid_path();
+        if let Err(err) = fs::remove_file(&pid_path) {
+            if err.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "Failed to remove service PID file {}: {err}",
+                    pid_path.display()
+                );
+            }
+        }
     }
 }
 
@@ -152,7 +215,7 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
     };
 
     let _lock = lock;
-    let writer = LedWriter::new();
+    let hardware = hardware::native_backend();
     let snapshot_path = hardware_snapshot_path();
     let mut phase = 0.0_f32;
     let mut last_hardware_read = Instant::now() - Duration::from_secs(10);
@@ -171,7 +234,7 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
             last_effect_update = now;
             let colors = colors_for_mode(settings.mode, phase, &settings);
             if static_color_refresh_due(now, last_static_refresh, &colors, &last_led_colors) {
-                match writer.write(&colors) {
+                match hardware.write_lighting(&colors) {
                     Ok(()) => {
                         last_led_colors = colors;
                         last_static_refresh = now;
@@ -185,7 +248,7 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
             phase = (phase + cycles_per_second(settings.speed) * elapsed.as_secs_f32()).fract();
             let colors = colors_for_mode(settings.mode, phase, &settings);
             if colors != last_led_colors {
-                match writer.write(&colors) {
+                match hardware.write_lighting(&colors) {
                     Ok(()) => {
                         last_led_colors = colors;
                     }
@@ -201,7 +264,7 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
         }
 
         if last_hardware_read.elapsed() >= Duration::from_secs(2) {
-            match dchu::read_hardware_snapshot() {
+            match hardware.read_snapshot() {
                 Ok(snapshot) => {
                     if let Err(err) = atomic_write_hardware_snapshot(&snapshot_path, &snapshot) {
                         eprintln!("Hardware snapshot write failed: {err}");
