@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use super::HardwareBackend;
 use crate::dchu::{self, FanMode, GpuMuxMode, HardwareSnapshot, PowerMode};
 use crate::fan_curve::FanCurveProfile;
-use crate::model::{ZoneColor, BASE_ZONES};
+use crate::model::{LightingConfig, Mode, ZoneColor, BASE_ZONES};
 
 const DEFAULT_LIGHTING_PROC_PATH: &str = "/proc/clevo_control_center_led";
 
@@ -22,12 +22,8 @@ impl LinuxHardwareBackend {
         }
     }
 
-    fn write_lighting_commands(&self, colors: &[ZoneColor]) -> io::Result<()> {
-        if colors.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "no zones"));
-        }
-
-        for command in lighting_commands(colors) {
+    fn apply_lighting_commands(&self, config: &LightingConfig) -> io::Result<()> {
+        for command in lighting_commands(config) {
             fs::write(&self.lighting_path, command)?;
         }
         Ok(())
@@ -43,8 +39,8 @@ impl HardwareBackend for LinuxHardwareBackend {
                 .is_ok()
     }
 
-    fn write_lighting(&self, colors: &[ZoneColor]) -> Result<(), String> {
-        self.write_lighting_commands(colors)
+    fn apply_lighting(&self, config: &LightingConfig) -> Result<(), String> {
+        self.apply_lighting_commands(config)
             .map_err(|err| err.to_string())
     }
 
@@ -71,7 +67,36 @@ impl HardwareBackend for LinuxHardwareBackend {
     }
 }
 
-fn lighting_commands(colors: &[ZoneColor]) -> Vec<String> {
+fn lighting_commands(config: &LightingConfig) -> Vec<String> {
+    let mut commands = vec![format!("brightness {}\n", config.brightness_percent)];
+    let colors = config
+        .zones
+        .iter()
+        .map(|zone| ZoneColor {
+            zone: *zone,
+            rgb: config.color,
+        })
+        .collect::<Vec<_>>();
+
+    if matches!(config.mode, Mode::Custom | Mode::Breathing) {
+        commands.extend(color_commands(&colors));
+    }
+
+    let effect = match config.mode {
+        Mode::Custom => None,
+        Mode::Cycle => Some("cycle"),
+        Mode::Wave => Some("wave"),
+        Mode::Blink => Some("blink"),
+        Mode::Breathing => Some("breathing"),
+    };
+    if let Some(effect) = effect {
+        commands.push(format!("effect {effect}\n"));
+    }
+
+    commands
+}
+
+fn color_commands(colors: &[ZoneColor]) -> Vec<String> {
     if colors.len() == 3
         && BASE_ZONES
             .iter()
@@ -94,15 +119,17 @@ mod tests {
 
     #[test]
     fn serializes_base_zones_same_color_as_short_command() {
-        let colors = BASE_ZONES
-            .into_iter()
-            .map(|zone| ZoneColor {
-                zone,
-                rgb: Rgb { r: 255, g: 0, b: 0 },
-            })
-            .collect::<Vec<_>>();
+        let config = LightingConfig {
+            mode: Mode::Custom,
+            brightness_percent: 100,
+            color: Rgb { r: 255, g: 0, b: 0 },
+            zones: BASE_ZONES.to_vec(),
+        };
 
-        assert_eq!(lighting_commands(&colors), vec!["ff0000\n"]);
+        assert_eq!(
+            lighting_commands(&config),
+            vec!["brightness 100\n", "ff0000\n"]
+        );
     }
 
     #[test]
@@ -118,9 +145,25 @@ mod tests {
             },
         ];
 
+        assert_eq!(color_commands(&colors), vec!["f0 ff0000\n", "f2 0000ff\n"]);
+    }
+
+    #[test]
+    fn serializes_oem_hardware_effects_without_software_frames() {
+        let config = LightingConfig {
+            mode: Mode::Breathing,
+            brightness_percent: 50,
+            color: Rgb {
+                r: 12,
+                g: 34,
+                b: 56,
+            },
+            zones: BASE_ZONES.to_vec(),
+        };
+
         assert_eq!(
-            lighting_commands(&colors),
-            vec!["f0 ff0000\n", "f2 0000ff\n"]
+            lighting_commands(&config),
+            vec!["brightness 50\n", "0c2238\n", "effect breathing\n"]
         );
     }
 }

@@ -20,7 +20,7 @@ pub(super) fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
     );
     painter.circle_filled(center, radius, rgb_color32(app.f0_color));
 
-    if response.hovered() && app.mode == Mode::Custom {
+    if response.hovered() && matches!(app.mode, Mode::Custom | Mode::Breathing) {
         painter.circle_stroke(
             center,
             radius + 6.0,
@@ -28,13 +28,12 @@ pub(super) fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
         );
     }
 
-    if response.clicked() && app.mode == Mode::Custom {
+    if response.clicked() && matches!(app.mode, Mode::Custom | Mode::Breathing) {
         match open_native_color_picker(app.f0_color) {
             Ok(Some(rgb)) => {
                 app.f0_color = rgb;
                 app.mark_settings_dirty();
                 app.persist_settings_if_due(true);
-                app.write_selected_color(app.f0_color);
             }
             Ok(None) => {}
             Err(err) => {

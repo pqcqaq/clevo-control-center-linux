@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::battery_strategy::BatteryStrategySettings;
 use crate::dchu::HardwareSnapshot;
 use crate::fan_curve::FanCurveSettings;
-use crate::model::{default_zones, normalize_zones, Mode, Rgb, ZoneId};
+use crate::model::{default_zones, normalize_zones, LightingConfig, Mode, Rgb, ZoneId};
 
 pub const APP_ID: &str = "clevo-control-center";
 const LEGACY_APP_ID: &str = "clevo-keyboard-led";
@@ -22,9 +22,8 @@ const HARDWARE_SNAPSHOT_FILE: &str = "hardware-status.json";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub mode: Mode,
-    pub speed: u8,
+    #[serde(default = "default_brightness_percent")]
     pub brightness: u8,
-    pub running: bool,
     pub f0_color: Rgb,
     #[serde(default = "default_zones")]
     pub zones: Vec<ZoneId>,
@@ -39,9 +38,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             mode: Mode::Custom,
-            speed: 36,
-            brightness: 100,
-            running: false,
+            brightness: default_brightness_percent(),
             f0_color: Rgb::WHITE,
             zones: default_zones(),
             fan_curves: FanCurveSettings::default(),
@@ -53,14 +50,10 @@ impl Default for Settings {
 
 impl Settings {
     pub fn sanitized(mut self) -> Self {
-        self.speed = self.speed.clamp(1, 100);
         self.brightness = self.brightness.clamp(1, 100);
         self.zones = normalize_zones(&self.zones);
         self.fan_curves = self.fan_curves.sanitized();
         self.battery_strategy = self.battery_strategy.sanitized();
-        if self.mode == Mode::Custom {
-            self.running = false;
-        }
         if let Some([x, y]) = self.window_pos {
             if !x.is_finite() || !y.is_finite() {
                 self.window_pos = None;
@@ -68,6 +61,19 @@ impl Settings {
         }
         self
     }
+
+    pub fn lighting_config(&self) -> LightingConfig {
+        LightingConfig {
+            mode: self.mode,
+            brightness_percent: self.brightness,
+            color: self.f0_color,
+            zones: normalize_zones(&self.zones),
+        }
+    }
+}
+
+const fn default_brightness_percent() -> u8 {
+    100
 }
 
 fn home_dir() -> PathBuf {
@@ -112,6 +118,16 @@ pub fn settings_path() -> PathBuf {
     let path = config_dir().join(SETTINGS_FILE);
     migrate_legacy_settings(&path);
     path
+}
+
+pub fn settings_path_and_first_run() -> (PathBuf, bool) {
+    let path = settings_path();
+    let first_run = is_first_run(&path);
+    (path, first_run)
+}
+
+fn is_first_run(path: &Path) -> bool {
+    !path.exists()
 }
 
 pub fn service_pid_path() -> PathBuf {
@@ -171,11 +187,25 @@ fn migrate_legacy_settings(target: &Path) {
 pub fn load_settings(path: &Path) -> Settings {
     match fs::read_to_string(path)
         .ok()
-        .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
+        .and_then(|text| parse_settings(&text))
     {
         Some(settings) => settings.sanitized(),
         None => Settings::default(),
     }
+}
+
+fn parse_settings(text: &str) -> Option<Settings> {
+    let mut value = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    let object = value.as_object_mut()?;
+    if !object.contains_key("brightness") {
+        let legacy_level = object
+            .remove("brightness_level")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(4)
+            .clamp(1, 4);
+        object.insert("brightness".to_owned(), (legacy_level * 25).into());
+    }
+    serde_json::from_value(value).ok()
 }
 
 pub fn file_modified(path: &Path) -> Option<SystemTime> {
@@ -218,10 +248,8 @@ mod tests {
     #[test]
     fn settings_json_roundtrips() {
         let settings = Settings {
-            mode: Mode::Chase,
-            speed: 72,
+            mode: Mode::Wave,
             brightness: 64,
-            running: true,
             f0_color: Rgb {
                 r: 12,
                 g: 34,
@@ -245,10 +273,8 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let parsed = serde_json::from_str::<Settings>(&json).unwrap();
 
-        assert_eq!(parsed.mode, Mode::Chase);
-        assert_eq!(parsed.speed, 72);
+        assert_eq!(parsed.mode, Mode::Wave);
         assert_eq!(parsed.brightness, 64);
-        assert!(parsed.running);
         assert_eq!(
             parsed.f0_color,
             Rgb {
@@ -266,12 +292,10 @@ mod tests {
     }
 
     #[test]
-    fn settings_sanitize_clamps_speed_and_drops_bad_position() {
+    fn settings_sanitize_clamps_brightness_and_drops_bad_position() {
         let settings = Settings {
             mode: Mode::Custom,
-            speed: 0,
             brightness: 0,
-            running: true,
             f0_color: Rgb::WHITE,
             zones: Vec::new(),
             fan_curves: FanCurveSettings {
@@ -288,13 +312,70 @@ mod tests {
         }
         .sanitized();
 
-        assert_eq!(settings.speed, 1);
         assert_eq!(settings.brightness, 1);
-        assert!(!settings.running);
         assert_eq!(settings.zones, default_zones());
         assert_eq!(settings.fan_curves.selected_profile, None);
         assert_eq!(settings.battery_strategy.charge_start_percent, 55);
         assert_eq!(settings.battery_strategy.charge_stop_percent, 60);
         assert_eq!(settings.window_pos, None);
+    }
+
+    #[test]
+    fn legacy_lighting_fields_keep_continuous_brightness() {
+        let json = r#"{
+            "mode": "chase",
+            "speed": 80,
+            "brightness": 80,
+            "running": true,
+            "f0_color": { "r": 1, "g": 2, "b": 3 },
+            "zones": ["f0"],
+            "window_pos": null
+        }"#;
+
+        let settings = parse_settings(json).unwrap().sanitized();
+
+        assert_eq!(settings.mode, Mode::Wave);
+        assert_eq!(settings.brightness, 80);
+        assert_eq!(settings.zones, vec![ZoneId::F0]);
+    }
+
+    #[test]
+    fn api_four_brightness_level_migrates_to_percent() {
+        let json = r#"{
+            "mode": "cycle",
+            "brightness_level": 3,
+            "f0_color": { "r": 1, "g": 2, "b": 3 },
+            "zones": ["f0", "f1", "f2"],
+            "window_pos": null
+        }"#;
+
+        let settings = parse_settings(json).unwrap().sanitized();
+
+        assert_eq!(settings.brightness, 75);
+    }
+
+    #[test]
+    fn missing_settings_file_is_treated_as_first_run() {
+        let path = std::env::temp_dir().join(format!(
+            "clevo-control-center-first-run-{}-missing.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        assert!(is_first_run(&path));
+        assert_eq!(load_settings(&path).mode, Settings::default().mode);
+    }
+
+    #[test]
+    fn existing_settings_file_skips_first_run() {
+        let path = std::env::temp_dir().join(format!(
+            "clevo-control-center-first-run-{}-existing.json",
+            std::process::id()
+        ));
+        fs::write(&path, "{}\n").unwrap();
+
+        assert!(!is_first_run(&path));
+
+        fs::remove_file(path).unwrap();
     }
 }

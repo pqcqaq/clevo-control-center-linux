@@ -4,10 +4,16 @@ mod overview;
 
 use eframe::egui::{vec2, Button, Color32, Frame, RichText, Ui};
 
+#[cfg(debug_assertions)]
+use super::advanced;
 use super::app::ClevoLedApp;
-use super::widgets::{command_panel, hardware_details, page_header};
-use super::{advanced, battery, fan};
-use crate::model::{AdvancedTab, ControlPage, ALL_ZONES};
+#[cfg(debug_assertions)]
+use super::widgets::command_panel;
+use super::widgets::{hardware_details, page_header};
+use super::{battery, fan};
+#[cfg(debug_assertions)]
+use crate::model::AdvancedTab;
+use crate::model::{ControlPage, ALL_ZONES};
 
 pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     match app.active_page {
@@ -16,12 +22,15 @@ pub(super) fn show_active_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         ControlPage::Fan => fan::fan_page(ui, app),
         ControlPage::Battery => battery::battery_page(ui, app),
         ControlPage::Gpu => gpu::gpu_page(ui, app),
+        #[cfg(debug_assertions)]
         ControlPage::Diagnostics => diagnostics_page(ui, app),
         ControlPage::Settings => settings_page(ui, app),
+        #[cfg(debug_assertions)]
         ControlPage::Advanced => advanced_page(ui, app),
     }
 }
 
+#[cfg(debug_assertions)]
 fn advanced_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     page_header(ui, "高级", "DCHU 0x0C 只读硬件状态");
     Frame::none()
@@ -55,6 +64,7 @@ fn advanced_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         });
 }
 
+#[cfg(debug_assertions)]
 fn diagnostics_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     page_header(ui, "诊断", "读取 DCHU 只读硬件状态");
     ui.horizontal_wrapped(|ui| {

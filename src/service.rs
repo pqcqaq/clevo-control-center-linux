@@ -6,15 +6,15 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::effects::{colors_for_mode, cycles_per_second, tick_interval};
 use crate::hardware;
-use crate::model::{Mode, ZoneColor};
+use crate::model::LightingConfig;
 use crate::settings::{
     atomic_write_hardware_snapshot, hardware_snapshot_path, load_settings, service_lock_path,
     service_log_path, service_pid_path,
 };
 
-const STATIC_COLOR_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const LIGHTING_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 pub fn ensure_service_running() {
     if active_service_pid().is_some() {
@@ -101,7 +101,15 @@ fn write_pid_file(path: &Path, pid: u32) -> io::Result<()> {
 }
 
 fn process_is_running(pid: u32) -> bool {
-    PathBuf::from(format!("/proc/{pid}")).exists()
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    !matches!(process_state_from_stat(&stat), Some('Z' | 'X') | None)
+}
+
+fn process_state_from_stat(stat: &str) -> Option<char> {
+    stat.rsplit_once(") ")
+        .and_then(|(_, fields)| fields.chars().next())
 }
 
 struct ServiceLock {
@@ -142,7 +150,7 @@ impl ServiceLock {
                     return Ok(Self { _file: file });
                 }
                 Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                    if active_service_pid().is_some() {
+                    if active_service_pid().is_some_and(|pid| pid != std::process::id()) {
                         return Err(io::Error::new(
                             io::ErrorKind::AlreadyExists,
                             "service already running",
@@ -217,50 +225,28 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
     let _lock = lock;
     let hardware = hardware::native_backend();
     let snapshot_path = hardware_snapshot_path();
-    let mut phase = 0.0_f32;
     let mut last_hardware_read = Instant::now() - Duration::from_secs(10);
-    let mut last_effect_update = Instant::now();
-    let mut last_static_refresh = Instant::now() - STATIC_COLOR_REFRESH_INTERVAL;
-    let mut last_led_colors: Vec<ZoneColor> = Vec::new();
+    let mut last_lighting: Option<LightingConfig> = None;
+    let mut lighting_applied = false;
+    let mut last_lighting_attempt = Instant::now() - LIGHTING_RETRY_INTERVAL;
 
     loop {
         let now = Instant::now();
-        let elapsed = now.duration_since(last_effect_update);
-        last_effect_update = now;
-
         let settings = load_settings(&settings_path);
-        if settings.mode == Mode::Custom {
-            phase = 0.0;
-            last_effect_update = now;
-            let colors = colors_for_mode(settings.mode, phase, &settings);
-            if static_color_refresh_due(now, last_static_refresh, &colors, &last_led_colors) {
-                match hardware.write_lighting(&colors) {
-                    Ok(()) => {
-                        last_led_colors = colors;
-                        last_static_refresh = now;
-                    }
-                    Err(err) => {
-                        eprintln!("LED service write failed: {err}");
-                    }
+        let lighting = settings.lighting_config();
+        let lighting_changed = last_lighting.as_ref() != Some(&lighting);
+        let retry_due = !lighting_applied
+            && now.saturating_duration_since(last_lighting_attempt) >= LIGHTING_RETRY_INTERVAL;
+        if lighting_changed || retry_due {
+            last_lighting_attempt = now;
+            lighting_applied = match hardware.apply_lighting(&lighting) {
+                Ok(()) => true,
+                Err(err) => {
+                    eprintln!("Lighting service write failed: {err}");
+                    false
                 }
-            }
-        } else if settings.running {
-            phase = (phase + cycles_per_second(settings.speed) * elapsed.as_secs_f32()).fract();
-            let colors = colors_for_mode(settings.mode, phase, &settings);
-            if colors != last_led_colors {
-                match hardware.write_lighting(&colors) {
-                    Ok(()) => {
-                        last_led_colors = colors;
-                    }
-                    Err(err) => {
-                        eprintln!("LED service write failed: {err}");
-                    }
-                }
-            }
-        } else {
-            last_effect_update = now;
-            last_led_colors.clear();
-            last_static_refresh = now - STATIC_COLOR_REFRESH_INTERVAL;
+            };
+            last_lighting = Some(lighting);
         }
 
         if last_hardware_read.elapsed() >= Duration::from_secs(2) {
@@ -275,66 +261,24 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
             last_hardware_read = Instant::now();
         }
 
-        thread::sleep(tick_interval(settings.speed));
+        thread::sleep(SERVICE_POLL_INTERVAL);
     }
-}
-
-fn static_color_refresh_due(
-    now: Instant,
-    last_refresh: Instant,
-    colors: &[ZoneColor],
-    last_colors: &[ZoneColor],
-) -> bool {
-    colors != last_colors
-        || now.saturating_duration_since(last_refresh) >= STATIC_COLOR_REFRESH_INTERVAL
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::{Rgb, ZoneId};
+    use super::process_state_from_stat;
 
     #[test]
-    fn static_color_refresh_runs_when_color_changed() {
-        let now = Instant::now();
-        let colors = vec![ZoneColor {
-            zone: ZoneId::F0,
-            rgb: Rgb { r: 1, g: 2, b: 3 },
-        }];
-
-        assert!(static_color_refresh_due(
-            now,
-            now,
-            &colors,
-            &Vec::<ZoneColor>::new()
-        ));
-    }
-
-    #[test]
-    fn static_color_refresh_runs_on_heartbeat_interval() {
-        let now = Instant::now();
-        let colors = vec![ZoneColor {
-            zone: ZoneId::F0,
-            rgb: Rgb { r: 1, g: 2, b: 3 },
-        }];
-        let last_refresh = now - STATIC_COLOR_REFRESH_INTERVAL;
-
-        assert!(static_color_refresh_due(
-            now,
-            last_refresh,
-            &colors,
-            &colors
-        ));
-    }
-
-    #[test]
-    fn static_color_refresh_skips_same_recent_color() {
-        let now = Instant::now();
-        let colors = vec![ZoneColor {
-            zone: ZoneId::F0,
-            rgb: Rgb { r: 1, g: 2, b: 3 },
-        }];
-
-        assert!(!static_color_refresh_due(now, now, &colors, &colors));
+    fn proc_stat_parser_distinguishes_running_and_zombie_processes() {
+        assert_eq!(
+            process_state_from_stat("83487 (clevo-control-center) S 1 2 3"),
+            Some('S')
+        );
+        assert_eq!(
+            process_state_from_stat("83492 (clevo-control-center) Z 1 2 3"),
+            Some('Z')
+        );
+        assert_eq!(process_state_from_stat("invalid"), None);
     }
 }

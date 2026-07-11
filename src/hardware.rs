@@ -2,11 +2,11 @@ mod linux;
 
 use crate::dchu::{FanMode, GpuMuxMode, HardwareSnapshot, PowerMode};
 use crate::fan_curve::FanCurveProfile;
-use crate::model::ZoneColor;
+use crate::model::LightingConfig;
 
 pub trait HardwareBackend: Send + Sync {
     fn lighting_ready(&self) -> bool;
-    fn write_lighting(&self, colors: &[ZoneColor]) -> Result<(), String>;
+    fn apply_lighting(&self, config: &LightingConfig) -> Result<(), String>;
     fn read_snapshot(&self) -> Result<HardwareSnapshot, String>;
     fn set_fan_mode(&self, mode: FanMode) -> Result<(), String>;
     fn set_power_mode(&self, mode: PowerMode) -> Result<(), String>;

@@ -6,7 +6,6 @@ use egui::ViewportBuilder;
 
 mod battery_strategy;
 mod dchu;
-mod effects;
 mod fan_curve;
 mod hardware;
 mod model;
@@ -31,13 +30,14 @@ fn main() -> eframe::Result {
         service::service_loop(settings::settings_path());
     }
 
-    if !module_loader::ensure_module_loaded_for_gui() {
-        return Ok(());
+    let (settings_path, first_run) = settings::settings_path_and_first_run();
+    if !first_run {
+        if !module_loader::ensure_module_loaded_for_gui() {
+            return Ok(());
+        }
+        service::ensure_service_running();
     }
-
-    let settings_path = settings::settings_path();
     let settings = settings::load_settings(&settings_path);
-    service::ensure_service_running();
     let hardware_backend = hardware::native_backend();
 
     let mut viewport = ViewportBuilder::default()
@@ -65,6 +65,7 @@ fn main() -> eframe::Result {
                 settings_path,
                 settings,
                 hardware_backend,
+                first_run,
             )))
         }),
     )

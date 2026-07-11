@@ -20,9 +20,9 @@ ACPI 路径：
 
 用户态通过 `/proc/clevo_control_center_led` 写入颜色。内核模块接收普通 `RRGGBB` 或 `zone RRGGBB` 输入，并转换成固件需要的数据。
 
-`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。左侧“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
+`/proc/clevo_dchu_status` 是只读状态接口，默认权限为 `0444`，GUI 和后台服务用它读取风扇 tach 计数、CPU/GPU 温度等硬件状态；tach 会按 Clevo EC 公式换算成 RPM，第三路 tach 有数据时总览会额外显示 PCH 风扇。debug 构建的“高级”页面会保留并展示 DCHU 0x0C 原始 buffer、风扇 raw/解析值、温度块和其他非零字段。
 
-`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数、GPU MUX 新接口 capability/status/options，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 会按原厂能力位决定控制项是否可见：电源模式看 `PSF5 bit0`，风扇设置看 `PSF5 bit7`，Silent 看 `PSF2 bit15`，MaxQ 看 `0x0D[0x0E] == 5`。MUX、超频、电池策略等只在“高级”页面只读展示能力，不作为写入控件公开。
+`/proc/clevo_dchu_config` 是只读配置/能力接口，默认权限为 `0444`，返回 DCHU 0x0D 配置 buffer、`PSF1/PSF2/PSF4/PSF5` 能力整数、GPU MUX 新接口 capability/status/options，以及受限 AppSettings 兼容层里的电源/风扇模式读回。GUI 会按原厂能力位决定控制项是否可见：电源模式看 `PSF5 bit0`，风扇设置看 `PSF5 bit7`，Silent 看 `PSF2 bit15`，MaxQ 看 `0x0D[0x0E] == 5`。MUX、超频、电池策略等能力只在 debug 构建的“高级”页面只读展示，不作为写入控件公开。
 
 `/proc/clevo_dchu_control` 是白名单控制接口，默认权限为 `0666`，GUI 用它写入已确认的 `fan-mode`、`power-mode` 和 `fan-curve` 命令。它会按原厂顺序同步受限 AppSettings 状态，但不接受任意 DCHU function、任意 AppSettings offset 或裸数据。
 
@@ -66,9 +66,9 @@ src/
   ui/
     app.rs                    应用状态和用户操作
     app/                      设置/硬件同步与窗口生命周期
-    pages.rs                  页面分发、诊断和设置页
+    pages.rs                  页面分发、设置页和 debug 诊断页
     pages/                    总览、灯光和显卡业务页面
-    advanced.rs               DCHU 高级只读信息解释
+    advanced.rs               debug-only DCHU 高级只读信息解释
     fan.rs                    风扇曲线编辑页
     battery.rs                本地电池策略页
     fan_gauge.rs              风扇仪表盘组件和绘制
@@ -252,14 +252,14 @@ scripts/run-gui.sh
 GUI 页面：
 
 - 总览：灯效摘要、CPU/GPU 风扇转速和温度；第三路风扇 tach 有数据时额外显示 PCH 风扇
-- 灯光：键盘 RGB 色块、灯效模式、速度和亮度
+- 灯光：键盘 RGB 色块、原生硬件灯效、分区和连续亮度
 - 风扇：本地自定义风扇曲线开关、曲线 1/2/3 编辑、保存、重置和恢复
 - 电池：本地电池策略开关、标准/保养/续航预设、充电阈值和低电量策略配置
-- 诊断：读取 DCHU 只读状态
+- 诊断（仅 debug 构建）：读取 DCHU 只读状态
 - 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
-- 高级：风扇 raw/解析值、温度块、受限 AppSettings 模式状态、GPU MUX 只读回读、官方能力位解析和其他 DCHU raw 状态
+- 高级（仅 debug 构建）：风扇 raw/解析值、温度块、受限 AppSettings 模式状态、GPU MUX 只读回读、官方能力位解析和其他 DCHU raw 状态
 
-自定义模式下启动按钮、速度、亮度不可用；选色后会直接写入当前选中的分区。默认分区为 `f0-f2`。
+三分区 RGB 键盘的亮度和动态模式按 Clevo 原厂 `DCHU 0x67` 协议执行：亮度百分比连续映射到固件值，循环、波浪、闪烁和呼吸由 EC 直接运行，不再由后台服务持续刷静态颜色。GUI 只保存灯光设置，由后台服务统一串行下发亮度、颜色和 effect；自定义和呼吸模式可选择左、中、右分区，默认分区为 `f0-f2`。
 
 “风扇”页中的自定义曲线保存到 `settings.json`。开启后，总览页的风扇模式行会额外显示 `曲线 1/2/3`；点击某条曲线时，程序会把对应 CPU/GPU 曲线转换成受限 `fan-curve` 命令写入 EC 风扇表，并把风扇模式切到 `custom`。曲线数据只以温度/占空比点传递，不暴露 EC raw payload。
 
@@ -288,6 +288,8 @@ scripts/stop-service.sh
 - 配置：`${XDG_CONFIG_HOME:-~/.config}/clevo-control-center/settings.json`
 - pid/lock：`${XDG_RUNTIME_DIR:-/tmp/clevo-control-center-$(id -u)}/clevo-control-center/`
 - 日志：`${XDG_STATE_HOME:-~/.local/state}/clevo-control-center/clevo-control-center.service.log`
+
+首次启动时，如果固定配置目录不存在 `settings.json`，GUI 会先显示硬件控制免责声明。用户明确确认并成功写入默认配置后，程序才会检查/加载内核模块并启动后台服务；退出、关闭窗口或配置保存失败都不会启动硬件写入服务。旧版配置成功迁移时视为已有配置，不重复显示免责声明。
 
 首次启动时，如果固定配置目录还没有 `settings.json`，程序会尝试从旧的 `~/.config/clevo-keyboard-led/settings.json` 或当前目录的旧版 `settings.json` 复制一份过去。
 

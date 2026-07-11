@@ -1,12 +1,12 @@
-use eframe::egui::{vec2, Button, Color32, ComboBox, Frame, RichText, Slider, Ui};
+use eframe::egui::{vec2, Color32, ComboBox, Frame, RichText, Slider, Ui};
 
 use super::super::app::ClevoLedApp;
 use super::super::color_picker::color_swatch;
 use super::super::widgets::page_header;
-use crate::model::Mode;
+use crate::model::{Mode, BASE_ZONES};
 
 pub(super) fn lighting_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "灯光", "控制键盘 RGB 动态模式、速度和亮度");
+    page_header(ui, "灯光", "控制键盘 RGB 原生灯效、颜色和亮度");
     Frame::none()
         .fill(Color32::from_rgb(35, 34, 30))
         .rounding(10.0)
@@ -23,46 +23,37 @@ pub(super) fn lighting_page(ui: &mut Ui, app: &mut ClevoLedApp) {
                         .show_ui(ui, |ui| {
                             for mode in Mode::all() {
                                 let old_mode = app.mode;
-                                let clicked = ui
-                                    .selectable_value(&mut app.mode, *mode, mode.label())
-                                    .clicked();
+                                ui.selectable_value(&mut app.mode, *mode, mode.label());
                                 if app.mode != old_mode {
-                                    if app.mode == Mode::Custom {
-                                        app.running = false;
-                                        app.write_selected_color(app.f0_color);
-                                    }
                                     app.mark_settings_dirty();
                                     app.persist_settings_if_due(true);
-                                }
-                                if clicked && app.running && app.mode == Mode::Custom {
-                                    app.write_selected_color(app.f0_color);
                                 }
                             }
                         });
 
                     ui.add_space(12.0);
-                    lighting_slider(ui, "速度", &mut app.speed, app.mode != Mode::Custom);
-                    ui.add_space(8.0);
-                    lighting_slider(ui, "亮度", &mut app.brightness, app.mode != Mode::Custom);
-                    if ui.ctx().input(|input| input.pointer.any_released()) {
+                    if brightness_control(ui, &mut app.brightness) {
                         app.mark_settings_dirty();
                         app.persist_settings_if_due(true);
                     }
+
+                    if matches!(app.mode, Mode::Custom | Mode::Breathing) {
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("作用区域")
+                                    .size(13.0)
+                                    .color(Color32::from_rgb(193, 186, 173)),
+                            );
+                            for (zone, label) in BASE_ZONES.into_iter().zip(["左", "中", "右"]) {
+                                let enabled = app.zones.contains(&zone);
+                                if ui.selectable_label(enabled, label).clicked() {
+                                    app.set_zone_enabled(zone, !enabled);
+                                }
+                            }
+                        });
+                    }
                 });
-                let label = if app.running {
-                    "停止灯效"
-                } else {
-                    "启动灯效"
-                };
-                if ui
-                    .add_enabled(
-                        app.mode != Mode::Custom,
-                        Button::new(RichText::new(label).size(15.0)).min_size(vec2(112.0, 42.0)),
-                    )
-                    .clicked()
-                {
-                    app.toggle();
-                }
             });
         });
 
@@ -76,19 +67,21 @@ pub(super) fn lighting_page(ui: &mut Ui, app: &mut ClevoLedApp) {
     }
 }
 
-fn lighting_slider(ui: &mut Ui, label: &str, value: &mut u8, enabled: bool) {
+fn brightness_control(ui: &mut Ui, value: &mut u8) -> bool {
+    let mut changed = false;
     ui.horizontal(|ui| {
         ui.set_width(330.0);
         ui.label(
-            RichText::new(label)
+            RichText::new("亮度")
                 .size(13.0)
                 .color(Color32::from_rgb(193, 186, 173)),
         );
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.add_sized(
+        changed = ui
+            .add_sized(
                 vec2(250.0, 20.0),
-                Slider::new(value, 1..=100).show_value(true),
-            );
-        });
+                Slider::new(value, 1..=100).integer().suffix("%"),
+            )
+            .changed();
     });
+    changed
 }

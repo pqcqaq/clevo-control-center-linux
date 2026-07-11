@@ -25,8 +25,8 @@
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_APP_SETTINGS_PROC_NAME "clevo_dchu_app_settings"
 #define MODULE_VERSION_PROC_NAME "clevo_control_center_version"
-#define CLEVO_MODULE_API_VERSION 3
-#define CLEVO_MODULE_API_VERSION_STRING "3"
+#define CLEVO_MODULE_API_VERSION 5
+#define CLEVO_MODULE_API_VERSION_STRING "5"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
 #define DCHU_BUFFER_SIZE 0x100
@@ -286,6 +286,47 @@ static int clevo_dchu_set_zone_rgb(u8 zone, u8 r, u8 g, u8 b)
 	return ret;
 }
 
+static int clevo_dchu_set_led_word(u32 word)
+{
+	u8 payload[4] = {
+		word & 0xff,
+		(word >> 8) & 0xff,
+		(word >> 16) & 0xff,
+		(word >> 24) & 0xff,
+	};
+
+	return clevo_dchu_eval(DCHU_FUNCTION, payload, sizeof(payload), NULL);
+}
+
+static int clevo_led_set_brightness(unsigned int percent)
+{
+	u8 value;
+
+	if (percent < 1 || percent > 100)
+		return -EINVAL;
+
+	value = (u8)(DIV_ROUND_CLOSEST(percent * 192, 100) - 1);
+	return clevo_dchu_set_led_word(0xf4000000 | value);
+}
+
+static int clevo_led_set_effect(const char *name)
+{
+	u32 word;
+
+	if (!strcmp(name, "cycle"))
+		word = 0x33010000;
+	else if (!strcmp(name, "wave"))
+		word = 0xb0000000;
+	else if (!strcmp(name, "blink"))
+		word = 0xa0000000;
+	else if (!strcmp(name, "breathing"))
+		word = 0x1002a000;
+	else
+		return -EINVAL;
+
+	return clevo_dchu_set_led_word(word);
+}
+
 static bool clevo_led_zone_allowed(unsigned int zone)
 {
 	return zone >= 0xf0 && zone <= 0xf6;
@@ -326,6 +367,7 @@ static ssize_t clevo_led_write(struct file *file, const char __user *ubuf,
 	char extra[2] = { 0 };
 	char *p;
 	unsigned int zone_int = 0xff;
+	unsigned int brightness_percent;
 	u8 r, g, b, zone;
 	int matched;
 	int ret;
@@ -342,6 +384,17 @@ static ssize_t clevo_led_write(struct file *file, const char __user *ubuf,
 	p = strim(buf);
 
 	matched = sscanf(p, "%15s %15s %1s", first, second, extra);
+	if (matched == 2 && !strcmp(first, "brightness")) {
+		if (kstrtouint(second, 10, &brightness_percent))
+			return -EINVAL;
+		ret = clevo_led_set_brightness(brightness_percent);
+		return ret ? ret : count;
+	}
+	if (matched == 2 && !strcmp(first, "effect")) {
+		ret = clevo_led_set_effect(second);
+		return ret ? ret : count;
+	}
+
 	if (matched == 1) {
 		if (parse_rgb_hex(first, &r, &g, &b))
 			return -EINVAL;
@@ -379,6 +432,9 @@ static ssize_t clevo_led_read(struct file *file, char __user *ubuf,
 		"Usage:\n"
 		"  echo ff0000 > /proc/clevo_control_center_led       # all 3 zones red\n"
 		"  echo 'f0 00ff00' > /proc/clevo_control_center_led  # zone 0xf0 green\n"
+		"  echo 'brightness 80' > /proc/clevo_control_center_led\n"
+		"  echo 'effect breathing' > /proc/clevo_control_center_led\n"
+		"Effects: cycle, wave, blink, breathing. Brightness: 1..100 percent.\n"
 		"Zones: explicit zone writes are limited to f0..f6.\n";
 
 	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));

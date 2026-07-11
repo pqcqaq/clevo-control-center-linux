@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 mod advanced;
 mod app;
 mod battery;

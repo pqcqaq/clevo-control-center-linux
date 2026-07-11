@@ -11,7 +11,9 @@ use crate::fan_curve::{
     default_fan_curve_profiles, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
 };
 use crate::hardware::HardwareBackend;
-use crate::model::{normalize_zones, AdvancedTab, ControlPage, Mode, Rgb, ZoneColor, ZoneId};
+#[cfg(debug_assertions)]
+use crate::model::AdvancedTab;
+use crate::model::{normalize_zones, ControlPage, Mode, Rgb, ZoneId};
 use crate::settings::{
     atomic_write_hardware_snapshot, file_modified, hardware_snapshot_path, Settings,
 };
@@ -26,11 +28,10 @@ pub struct ClevoLedApp {
     pub(super) hardware_status: Option<String>,
     last_hardware_sync: Instant,
     pub(super) active_page: ControlPage,
+    #[cfg(debug_assertions)]
     pub(super) advanced_tab: AdvancedTab,
     pub(super) mode: Mode,
-    pub(super) speed: u8,
     pub(super) brightness: u8,
-    pub(super) running: bool,
     pub(super) f0_color: Rgb,
     pub(super) zones: Vec<ZoneId>,
     pub(super) fan_curves: FanCurveSettings,
@@ -46,6 +47,9 @@ pub struct ClevoLedApp {
     dirty_settings: bool,
     dirty_window_position: bool,
     last_settings_save: Instant,
+    pub(super) first_run_pending: bool,
+    hardware_runtime_started: bool,
+    pub(super) first_run_error: Option<String>,
 }
 
 impl ClevoLedApp {
@@ -53,16 +57,17 @@ impl ClevoLedApp {
         settings_path: PathBuf,
         settings: Settings,
         hardware_backend: Box<dyn HardwareBackend>,
+        first_run: bool,
     ) -> Self {
-        if !hardware_backend.lighting_ready() {
-            eprintln!("Keyboard RGB interface is not writable");
-        }
-
         let hardware_snapshot_path = hardware_snapshot_path();
-        let hardware = persistence::wait_for_hardware_snapshot(
-            &hardware_snapshot_path,
-            Duration::from_millis(1200),
-        );
+        let hardware = if first_run {
+            None
+        } else {
+            persistence::wait_for_hardware_snapshot(
+                &hardware_snapshot_path,
+                Duration::from_millis(1200),
+            )
+        };
         let hardware_snapshot_mtime = file_modified(&hardware_snapshot_path);
         let hardware_status = if hardware.is_none() {
             Some("正在等待风扇数据".to_owned())
@@ -79,11 +84,10 @@ impl ClevoLedApp {
             hardware_status,
             last_hardware_sync: Instant::now() - Duration::from_secs(2),
             active_page: ControlPage::Overview,
+            #[cfg(debug_assertions)]
             advanced_tab: AdvancedTab::Fans,
             mode: settings.mode,
-            speed: settings.speed,
             brightness: settings.brightness,
-            running: settings.running,
             f0_color: settings.f0_color,
             zones: settings.zones,
             fan_curves: settings.fan_curves.clone(),
@@ -99,19 +103,51 @@ impl ClevoLedApp {
             dirty_settings: false,
             dirty_window_position: false,
             last_settings_save: Instant::now(),
+            first_run_pending: first_run,
+            hardware_runtime_started: !first_run,
+            first_run_error: None,
         };
         app.settings_mtime = file_modified(&app.settings_path);
         app
     }
 
-    pub(super) fn toggle(&mut self) {
-        if self.mode == Mode::Custom {
+    fn start_hardware_runtime(&mut self) {
+        if self.hardware_runtime_started {
             return;
         }
+        if !crate::module_loader::ensure_module_loaded_for_gui() {
+            return;
+        }
+        if !self.hardware_backend.lighting_ready() {
+            eprintln!("Keyboard RGB interface is not writable");
+        }
+        crate::service::ensure_service_running();
+        self.hardware_runtime_started = true;
+    }
 
-        self.running = !self.running;
-        self.mark_settings_dirty();
-        self.persist_settings_if_due(true);
+    pub(super) fn accept_first_run_disclaimer(&mut self) {
+        let settings = Settings {
+            mode: self.mode,
+            brightness: self.brightness,
+            f0_color: self.f0_color,
+            zones: self.selected_zones(),
+            fan_curves: self.fan_curves.clone(),
+            battery_strategy: self.battery_strategy.clone(),
+            window_pos: self.window_pos,
+        }
+        .sanitized();
+
+        match crate::settings::atomic_write_settings(&self.settings_path, &settings) {
+            Ok(()) => {
+                self.settings_mtime = file_modified(&self.settings_path);
+                self.first_run_pending = false;
+                self.first_run_error = None;
+                self.start_hardware_runtime();
+            }
+            Err(err) => {
+                self.first_run_error = Some(format!("无法保存首次启动确认：{err}"));
+            }
+        }
     }
 
     pub(super) fn selected_zones(&self) -> Vec<ZoneId> {
@@ -129,9 +165,6 @@ impl ClevoLedApp {
         self.zones = normalize_zones(&self.zones);
         self.mark_settings_dirty();
         self.persist_settings_if_due(true);
-        if self.mode == Mode::Custom {
-            self.write_selected_color(self.f0_color);
-        }
     }
 
     pub(super) fn set_fan_curve_enabled(&mut self, enabled: bool) {
@@ -209,20 +242,7 @@ impl ClevoLedApp {
         self.persist_settings_if_due(true);
     }
 
-    pub(super) fn write_selected_color(&mut self, rgb: Rgb) {
-        let colors = self
-            .selected_zones()
-            .into_iter()
-            .map(|zone| ZoneColor { zone, rgb })
-            .collect::<Vec<_>>();
-
-        if let Err(err) = self.hardware_backend.write_lighting(&colors) {
-            self.last_error = Some(err.clone());
-            self.running = false;
-            eprintln!("Failed to write selected color: {err}");
-        }
-    }
-
+    #[cfg(debug_assertions)]
     pub(super) fn show_hardware_diagnostics(&mut self) {
         match self.hardware_backend.read_snapshot() {
             Ok(snapshot) => {

@@ -6,7 +6,6 @@ use eframe::egui::Context;
 
 use super::ClevoLedApp;
 use crate::dchu::HardwareSnapshot;
-use crate::model::Mode;
 use crate::settings::{
     atomic_write_settings, file_modified, load_hardware_snapshot, load_settings, Settings,
 };
@@ -36,9 +35,7 @@ impl ClevoLedApp {
 
     fn apply_external_settings(&mut self, settings: Settings) {
         self.mode = settings.mode;
-        self.speed = settings.speed;
         self.brightness = settings.brightness;
-        self.running = settings.running;
         self.f0_color = settings.f0_color;
         self.zones = settings.zones;
         self.fan_curves = settings.fan_curves.clone();
@@ -96,9 +93,7 @@ impl ClevoLedApp {
         let mut settings = if self.dirty_settings {
             Settings {
                 mode: self.mode,
-                speed: self.speed,
                 brightness: self.brightness,
-                running: self.running && self.mode != Mode::Custom,
                 f0_color: self.f0_color,
                 zones: self.selected_zones(),
                 fan_curves: self.fan_curves.clone(),

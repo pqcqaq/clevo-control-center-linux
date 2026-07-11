@@ -2,11 +2,14 @@ mod cli;
 mod io;
 
 use serde::{Deserialize, Serialize};
+#[cfg(any(debug_assertions, test))]
 use std::fmt::Write as _;
 
 pub use cli::{print_dchu_usage, run_dchu_cli};
+#[cfg(debug_assertions)]
+pub use io::fan_rpm_from_tach;
+pub use io::read_hardware_snapshot;
 pub(crate) use io::{dchu_control_write, fan_curve_points_arg};
-pub use io::{fan_rpm_from_tach, read_hardware_snapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FanMode {
@@ -174,6 +177,7 @@ pub struct DchuConfig {
 }
 
 impl DchuConfig {
+    #[cfg(any(debug_assertions, test))]
     pub fn fan_count(&self) -> Option<u8> {
         self.raw_config.get(0x0c).copied().or(self.fanq)
     }
@@ -198,6 +202,7 @@ impl DchuConfig {
         self.init_fan_mode().map(|mode| mode == 5)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn custom_fan_table_capability(&self) -> Option<bool> {
         let fan_setting = self.fan_speed_setting_capability()?;
         let fan_count = self.fan_count()?;
@@ -205,14 +210,17 @@ impl DchuConfig {
         Some(fan_setting && fan_count > 1 && !custom_disabled)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn legacy_gpu_mux_capability(&self) -> Option<bool> {
         capability_bit(self.psf2, 20)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn new_gpu_mux_capability(&self) -> Option<bool> {
         self.bios_feature_offset18.map(|value| value & 0x01 != 0)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn gpu_mux_capability(&self) -> Option<bool> {
         any_known_capability(&[
             self.legacy_gpu_mux_capability(),
@@ -220,6 +228,7 @@ impl DchuConfig {
         ])
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn gpu_oc_capability(&self) -> Option<bool> {
         any_known_capability(&[
             capability_bit(self.psf5, 5),
@@ -228,10 +237,12 @@ impl DchuConfig {
         ])
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn cpu_oc_capability(&self) -> Option<bool> {
         any_known_capability(&[capability_bit(self.psf5, 6), capability_bit(self.psf2, 23)])
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn xmp_capability(&self) -> Option<bool> {
         capability_bit(self.psf2, 24)
     }
@@ -244,14 +255,17 @@ impl DchuConfig {
         capability_bit(self.psf5, 9)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn anti_dust_capability(&self) -> Option<bool> {
         capability_bit(self.psf4, 7)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn fan_offset_capability(&self) -> Option<bool> {
         capability_bit(self.psf4, 10).map(|disabled| !disabled)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn dtt_capability(&self) -> Option<bool> {
         capability_bit(self.psf4, 12)
     }
@@ -264,6 +278,7 @@ impl DchuConfig {
         self.fan_speed_setting_capability().unwrap_or(true)
     }
 
+    #[cfg(any(debug_assertions, test))]
     fn custom_fan_disabled_by_config(&self) -> Option<bool> {
         self.raw_config
             .get(0x2b)
@@ -275,6 +290,7 @@ fn capability_bit(value: Option<u32>, bit: u32) -> Option<bool> {
     value.map(|value| (value & (1u32 << bit)) != 0)
 }
 
+#[cfg(any(debug_assertions, test))]
 fn any_known_capability(values: &[Option<bool>]) -> Option<bool> {
     if values.contains(&Some(true)) {
         Some(true)
@@ -301,6 +317,7 @@ pub struct HardwareSnapshot {
 }
 
 impl HardwareSnapshot {
+    #[cfg(any(debug_assertions, test))]
     pub fn diagnostic_report(&self) -> String {
         let mut report = String::from("DCHU hardware snapshot\n");
         for fan in &self.fans {

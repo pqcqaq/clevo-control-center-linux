@@ -72,8 +72,8 @@ pub enum Mode {
     Custom,
     #[serde(rename = "cycle")]
     Cycle,
-    #[serde(rename = "chase")]
-    Chase,
+    #[serde(rename = "wave", alias = "chase")]
+    Wave,
     #[serde(rename = "blink")]
     Blink,
     #[serde(rename = "breathing")]
@@ -85,7 +85,7 @@ impl Mode {
         match self {
             Self::Custom => "自定义",
             Self::Cycle => "循环",
-            Self::Chase => "追逐",
+            Self::Wave => "波浪",
             Self::Blink => "闪烁",
             Self::Breathing => "呼吸",
         }
@@ -95,7 +95,7 @@ impl Mode {
         &[
             Self::Custom,
             Self::Cycle,
-            Self::Chase,
+            Self::Wave,
             Self::Blink,
             Self::Breathing,
         ]
@@ -109,8 +109,10 @@ pub enum ControlPage {
     Fan,
     Battery,
     Gpu,
+    #[cfg(debug_assertions)]
     Diagnostics,
     Settings,
+    #[cfg(debug_assertions)]
     Advanced,
 }
 
@@ -122,8 +124,10 @@ impl ControlPage {
             Self::Fan => "风扇",
             Self::Battery => "电池",
             Self::Gpu => "显卡",
+            #[cfg(debug_assertions)]
             Self::Diagnostics => "诊断",
             Self::Settings => "设置",
+            #[cfg(debug_assertions)]
             Self::Advanced => "高级",
         }
     }
@@ -135,13 +139,16 @@ impl ControlPage {
             Self::Fan,
             Self::Battery,
             Self::Gpu,
+            #[cfg(debug_assertions)]
             Self::Diagnostics,
             Self::Settings,
+            #[cfg(debug_assertions)]
             Self::Advanced,
         ]
     }
 }
 
+#[cfg(debug_assertions)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdvancedTab {
     Fans,
@@ -149,6 +156,7 @@ pub enum AdvancedTab {
     Other,
 }
 
+#[cfg(debug_assertions)]
 impl AdvancedTab {
     pub fn label(self) -> &'static str {
         match self {
@@ -167,6 +175,14 @@ impl AdvancedTab {
 pub struct ZoneColor {
     pub zone: ZoneId,
     pub rgb: Rgb,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LightingConfig {
+    pub mode: Mode,
+    pub brightness_percent: u8,
+    pub color: Rgb,
+    pub zones: Vec<ZoneId>,
 }
 
 pub fn default_zones() -> Vec<ZoneId> {
@@ -191,7 +207,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hardware_pages_are_between_lighting_and_diagnostics() {
+    fn hardware_pages_follow_lighting() {
         let pages = ControlPage::all();
         let lighting_index = pages
             .iter()
@@ -200,12 +216,16 @@ mod tests {
         assert_eq!(pages.get(lighting_index + 1), Some(&ControlPage::Fan));
         assert_eq!(pages.get(lighting_index + 2), Some(&ControlPage::Battery));
         assert_eq!(pages.get(lighting_index + 3), Some(&ControlPage::Gpu));
+        #[cfg(debug_assertions)]
         assert_eq!(
             pages.get(lighting_index + 4),
             Some(&ControlPage::Diagnostics)
         );
+        #[cfg(not(debug_assertions))]
+        assert_eq!(pages.get(lighting_index + 4), Some(&ControlPage::Settings));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn advanced_page_is_after_settings() {
         let pages = ControlPage::all();
@@ -214,5 +234,11 @@ mod tests {
             .position(|page| *page == ControlPage::Settings)
             .unwrap();
         assert_eq!(pages.get(settings_index + 1), Some(&ControlPage::Advanced));
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn release_navigation_ends_at_settings() {
+        assert_eq!(ControlPage::all().last(), Some(&ControlPage::Settings));
     }
 }

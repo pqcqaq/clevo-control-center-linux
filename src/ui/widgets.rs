@@ -1,9 +1,11 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(debug_assertions)]
+use eframe::egui::{self, Frame, ScrollArea};
 use eframe::egui::{
-    self, pos2, vec2, Color32, Context, FontData, FontDefinitions, FontFamily, Frame, RichText,
-    ScrollArea, Sense, Stroke, Ui,
+    pos2, vec2, Color32, Context, FontData, FontDefinitions, FontFamily, RichText, Sense, Stroke,
+    Ui,
 };
 
 use super::app::ClevoLedApp;
@@ -68,6 +70,7 @@ fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
     )
 }
 
+#[cfg(debug_assertions)]
 pub(super) fn command_panel(ui: &mut Ui, app: &mut ClevoLedApp) {
     if let Some(status) = &app.command_status {
         ui.label(
