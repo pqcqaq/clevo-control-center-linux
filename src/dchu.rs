@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(debug_assertions, test))]
 use std::fmt::Write as _;
 
+use crate::preferences::UiLanguage;
+
 pub use cli::{print_dchu_usage, run_dchu_cli};
 #[cfg(debug_assertions)]
 pub use io::fan_rpm_from_tach;
@@ -21,13 +23,13 @@ pub enum FanMode {
 }
 
 impl FanMode {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Auto => "自动",
-            Self::Max => "最大",
-            Self::Silent => "静音",
+            Self::Auto => language.pick("自动", "Auto"),
+            Self::Max => language.pick("最大", "Maximum"),
+            Self::Silent => language.pick("静音", "Silent"),
             Self::MaxQ => "MaxQ",
-            Self::Custom => "自定义",
+            Self::Custom => language.pick("自定义", "Custom"),
         }
     }
 
@@ -62,12 +64,12 @@ pub enum PowerMode {
 }
 
 impl PowerMode {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Quiet => "安静",
-            Self::PowerSaving => "省电",
-            Self::Performance => "性能",
-            Self::Entertainment => "娱乐",
+            Self::Quiet => language.pick("安静", "Quiet"),
+            Self::PowerSaving => language.pick("省电", "Power saver"),
+            Self::Performance => language.pick("性能", "Performance"),
+            Self::Entertainment => language.pick("娱乐", "Entertainment"),
         }
     }
 
@@ -97,11 +99,51 @@ pub enum GpuMuxMode {
     DGpu,
 }
 
-impl GpuMuxMode {
-    pub fn label(self) -> &'static str {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyboardLightingLayout {
+    Unsupported,
+    White,
+    SingleZone,
+    ThreeZone,
+    PerKey,
+    Unknown,
+}
+
+impl KeyboardLightingLayout {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::MSHybrid => "混合模式",
-            Self::DGpu => "独显直连",
+            Self::Unsupported => language.pick("不支持", "Unsupported"),
+            Self::White => language.pick("白光键盘", "White backlight"),
+            Self::SingleZone => language.pick("单区 RGB", "Single-zone RGB"),
+            Self::ThreeZone => language.pick("三区 RGB", "Three-zone RGB"),
+            Self::PerKey => language.pick("逐键 RGB", "Per-key RGB"),
+            Self::Unknown => language.pick("未知", "Unknown"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KeyboardLightingCapabilities {
+    pub layout: KeyboardLightingLayout,
+    pub logo: Option<bool>,
+    pub lightbar: Option<bool>,
+}
+
+impl Default for KeyboardLightingCapabilities {
+    fn default() -> Self {
+        Self {
+            layout: KeyboardLightingLayout::Unknown,
+            logo: None,
+            lightbar: None,
+        }
+    }
+}
+
+impl GpuMuxMode {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
+        match self {
+            Self::MSHybrid => language.pick("混合模式", "Hybrid mode"),
+            Self::DGpu => language.pick("独显直连", "Discrete GPU"),
         }
     }
 
@@ -177,6 +219,27 @@ pub struct DchuConfig {
 }
 
 impl DchuConfig {
+    pub fn keyboard_type(&self) -> Option<u8> {
+        self.raw_config.get(0x0f).copied().or(self.kbtp)
+    }
+
+    pub fn keyboard_lighting_capabilities(&self) -> KeyboardLightingCapabilities {
+        let layout = match self.keyboard_type() {
+            Some(0) => KeyboardLightingLayout::Unsupported,
+            Some(1) => KeyboardLightingLayout::White,
+            Some(2) => KeyboardLightingLayout::ThreeZone,
+            Some(3 | 19 | 35 | 51 | 243) => KeyboardLightingLayout::PerKey,
+            Some(6 | 22) => KeyboardLightingLayout::SingleZone,
+            Some(_) | None => KeyboardLightingLayout::Unknown,
+        };
+
+        KeyboardLightingCapabilities {
+            layout,
+            logo: capability_bit(self.psf2, 18),
+            lightbar: capability_bit(self.psf2, 12),
+        }
+    }
+
     #[cfg(any(debug_assertions, test))]
     pub fn fan_count(&self) -> Option<u8> {
         self.raw_config.get(0x0c).copied().or(self.fanq)

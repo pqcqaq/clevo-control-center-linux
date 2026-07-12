@@ -4,6 +4,7 @@ use eframe::egui::{
 };
 
 use super::app::ClevoLedApp;
+use super::theme;
 use super::widgets::{page_header, toggle_switch};
 use crate::fan_curve::{
     default_fan_curve_profiles, FanCurve, FanCurveChannel, FanCurveSelection, FanCurveSettings,
@@ -15,7 +16,12 @@ const CURVE_PANEL_HEIGHT: f32 = 236.0;
 const SELECTED_POINT_EDITOR_HEIGHT: f32 = 34.0;
 
 pub(super) fn fan_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "风扇", "自定义风扇控制曲线");
+    page_header(
+        ui,
+        app.language.pick("风扇", "Fans"),
+        app.language
+            .pick("自定义风扇控制曲线", "Custom fan control curves"),
+    );
 
     fan_curve_switch(ui, app);
     if app.fan_curve_draft.enabled {
@@ -31,39 +37,50 @@ pub(super) fn fan_page(ui: &mut Ui, app: &mut ClevoLedApp) {
 fn fan_curve_switch(ui: &mut Ui, app: &mut ClevoLedApp) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
-        if toggle_switch(ui, app.fan_curve_draft.enabled) {
+        if toggle_switch(
+            ui,
+            app.fan_curve_draft.enabled,
+            theme::palette(app.theme_color),
+        ) {
             app.set_fan_curve_enabled(!app.fan_curve_draft.enabled);
         }
         ui.label(
-            RichText::new("开启自定义风扇曲线")
-                .size(15.0)
-                .strong()
-                .color(Color32::from_rgb(236, 230, 218)),
+            RichText::new(
+                app.language
+                    .pick("开启自定义风扇曲线", "Enable custom fan curves"),
+            )
+            .size(15.0)
+            .strong()
+            .color(Color32::from_rgb(236, 230, 218)),
         );
     });
 }
 
 fn fan_curve_tabs(ui: &mut Ui, app: &mut ClevoLedApp) {
+    let palette = theme::palette(app.theme_color);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         for index in 0..FAN_CURVE_COUNT {
             let selected = app.fan_curve_tab == index;
             let fill = if selected {
-                Color32::from_rgb(74, 52, 27)
+                palette.selected_surface
             } else {
                 Color32::from_rgb(27, 26, 23)
             };
             let stroke = if selected {
-                Stroke::new(1.2, Color32::from_rgb(226, 166, 88))
+                Stroke::new(1.2, palette.border)
             } else {
                 Stroke::new(1.0, Color32::from_rgb(64, 58, 48))
             };
             if ui
                 .add_sized(
                     vec2(104.0, 32.0),
-                    Button::new(FanCurveSettings::profile_label(index))
-                        .fill(fill)
-                        .stroke(stroke),
+                    Button::new(FanCurveSettings::localized_profile_label(
+                        index,
+                        app.language,
+                    ))
+                    .fill(fill)
+                    .stroke(stroke),
                 )
                 .clicked()
             {
@@ -101,7 +118,7 @@ fn curve_panel(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, wid
     ui.vertical(|ui| {
         ui.set_width(width);
         ui.label(
-            RichText::new(channel.label())
+            RichText::new(channel.localized_label(app.language))
                 .size(14.0)
                 .strong()
                 .color(Color32::from_rgb(232, 224, 210)),
@@ -114,6 +131,7 @@ fn curve_panel(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, wid
 }
 
 fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChannel, rect: Rect) {
+    let palette = theme::palette(app.theme_color);
     let profile_index = app.fan_curve_tab;
     let points = channel_curve_mut(app, channel).points.clone();
     let painter = ui.painter_at(rect);
@@ -126,7 +144,7 @@ fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChanne
         .collect::<Vec<_>>();
     painter.add(Shape::line(
         screen_points.clone(),
-        Stroke::new(2.4, Color32::from_rgb(229, 164, 86)),
+        Stroke::new(2.4, palette.accent),
     ));
 
     for (index, point_pos) in screen_points.iter().enumerate() {
@@ -164,9 +182,9 @@ fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChanne
             *point_pos,
             radius,
             if selected {
-                Color32::from_rgb(255, 206, 132)
+                palette.bright
             } else {
-                Color32::from_rgb(198, 143, 80)
+                palette.dim
             },
         );
     }
@@ -231,22 +249,30 @@ fn selected_point_editor(ui: &mut Ui, app: &mut ClevoLedApp, selection: FanCurve
     let mut duty = point.duty_percent;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
-        ui.label(
-            RichText::new(format!(
+        let point_label = match app.language {
+            crate::preferences::UiLanguage::SimplifiedChinese => format!(
                 "{} 点 {}",
-                selection.channel.label(),
+                selection.channel.localized_label(app.language),
                 selection.point + 1
-            ))
-            .size(13.0)
-            .strong()
-            .color(Color32::from_rgb(222, 214, 199)),
+            ),
+            crate::preferences::UiLanguage::English => format!(
+                "{} · point {}",
+                selection.channel.localized_label(app.language),
+                selection.point + 1
+            ),
+        };
+        ui.label(
+            RichText::new(point_label)
+                .size(13.0)
+                .strong()
+                .color(Color32::from_rgb(222, 214, 199)),
         );
-        ui.label("温度");
+        ui.label(app.language.pick("温度", "Temperature"));
         let temp_changed = ui
             .add(DragValue::new(&mut temp).range(FAN_CURVE_MIN_TEMP..=FAN_CURVE_MAX_TEMP))
             .changed();
         ui.label("°C");
-        ui.label("占空比");
+        ui.label(app.language.pick("占空比", "Duty"));
         let duty_changed = ui
             .add(DragValue::new(&mut duty).range(FAN_CURVE_MIN_DUTY..=FAN_CURVE_MAX_DUTY))
             .changed();
@@ -284,7 +310,7 @@ fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
         if ui
             .add_enabled(
                 has_unsaved_changes,
-                Button::new("恢复").min_size(vec2(100.0, 34.0)),
+                Button::new(app.language.pick("恢复", "Revert")).min_size(vec2(100.0, 34.0)),
             )
             .clicked()
         {
@@ -293,7 +319,7 @@ fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
         if ui
             .add_enabled(
                 can_reset_current,
-                Button::new("重置").min_size(vec2(100.0, 34.0)),
+                Button::new(app.language.pick("重置", "Reset")).min_size(vec2(100.0, 34.0)),
             )
             .clicked()
         {
@@ -302,7 +328,7 @@ fn fan_curve_actions(ui: &mut Ui, app: &mut ClevoLedApp) {
         if ui
             .add_enabled(
                 has_unsaved_changes,
-                Button::new("保存").min_size(vec2(100.0, 34.0)),
+                Button::new(app.language.pick("保存", "Save")).min_size(vec2(100.0, 34.0)),
             )
             .clicked()
         {

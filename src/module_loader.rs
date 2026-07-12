@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::preferences::UiLanguage;
+
 const REQUIRED_PROC_NODES: [&str; 3] = [
     "/proc/clevo_control_center_led",
     "/proc/clevo_dchu_status",
@@ -11,24 +13,34 @@ const MODULE_VERSION_PROC: &str = "/proc/clevo_control_center_version";
 const REQUIRED_MODULE_API_VERSION: u32 = 5;
 const MODULE_FILE_NAME: &str = "clevo_control_center.ko";
 
-pub fn ensure_module_loaded_for_gui() -> bool {
+pub fn ensure_module_loaded_for_gui(language: UiLanguage) -> bool {
     let state = module_state();
     if state == ModuleState::Ready {
         return true;
     }
 
-    if !confirm_load_module(state) {
+    if !confirm_load_module(state, language) {
         return false;
     }
 
-    match load_module_with_auth() {
+    match load_module_with_auth(language) {
         Ok(()) if module_state() == ModuleState::Ready => true,
         Ok(()) => {
-            show_error("模块加载/更新命令已执行，但模块版本仍不可用或过旧。");
+            show_error(
+                language.pick(
+                    "模块加载/更新命令已执行，但模块版本仍不可用或过旧。",
+                    "The module command completed, but the required module version is still unavailable.",
+                ),
+                language,
+            );
             false
         }
         Err(err) => {
-            show_error(&format!("模块加载/更新失败：{err}"));
+            let text = match language {
+                UiLanguage::SimplifiedChinese => format!("模块加载/更新失败：{err}"),
+                UiLanguage::English => format!("Module loading or update failed: {err}"),
+            };
+            show_error(&text, language);
             false
         }
     }
@@ -69,32 +81,46 @@ fn parse_module_api_version(text: &str) -> Option<u32> {
     })
 }
 
-fn confirm_load_module(state: ModuleState) -> bool {
+fn confirm_load_module(state: ModuleState, language: UiLanguage) -> bool {
     let text = match state {
         ModuleState::Ready => return true,
-        ModuleState::Missing => "Clevo 控制中心内核模块未加载。是否立即通过系统认证加载？".to_owned(),
-        ModuleState::Outdated(Some(version)) => format!(
-            "Clevo 控制中心内核模块版本过旧（当前 API {version}，需要 API {REQUIRED_MODULE_API_VERSION}）。是否立即通过系统认证更新？"
-        ),
-        ModuleState::Outdated(None) => {
-            "Clevo 控制中心内核模块版本过旧或无法读取版本。是否立即通过系统认证更新？".to_owned()
-        }
+        ModuleState::Missing => language.pick(
+            "Clevo 控制中心内核模块未加载。是否立即通过系统认证加载？",
+            "The Clevo Control Center kernel module is not loaded. Authenticate to load it now?",
+        ).to_owned(),
+        ModuleState::Outdated(Some(version)) => match language {
+            UiLanguage::SimplifiedChinese => format!(
+                "Clevo 控制中心内核模块版本过旧（当前 API {version}，需要 API {REQUIRED_MODULE_API_VERSION}）。是否立即通过系统认证更新？"
+            ),
+            UiLanguage::English => format!(
+                "The kernel module is outdated (API {version}; API {REQUIRED_MODULE_API_VERSION} is required). Authenticate to update it now?"
+            ),
+        },
+        ModuleState::Outdated(None) => language.pick(
+            "Clevo 控制中心内核模块版本过旧或无法读取版本。是否立即通过系统认证更新？",
+            "The kernel module is outdated or its version cannot be read. Authenticate to update it now?",
+        ).to_owned(),
     };
     let text_arg = format!("--text={text}");
+    let title = format!(
+        "--title={}",
+        language.pick("模块需要加载", "Kernel module required")
+    );
+    let accept = format!("--ok-label={}", language.pick("立即处理", "Continue"));
+    let cancel = format!("--cancel-label={}", language.pick("关闭", "Close"));
 
-    match run_zenity(&[
-        "--question",
-        "--title=模块需要加载",
-        &text_arg,
-        "--ok-label=立即处理",
-        "--cancel-label=关闭",
-    ]) {
+    match run_zenity(&["--question", &title, &text_arg, &accept, &cancel]) {
         DialogResult::Accepted => return true,
         DialogResult::Rejected => return false,
         DialogResult::Unavailable => {}
     }
 
-    match run_kdialog(&["--yesno", &text, "--title", "模块需要加载"]) {
+    match run_kdialog(&[
+        "--yesno",
+        &text,
+        "--title",
+        language.pick("模块需要加载", "Kernel module required"),
+    ]) {
         DialogResult::Accepted => true,
         DialogResult::Rejected | DialogResult::Unavailable => {
             eprintln!("{text}");
@@ -103,15 +129,24 @@ fn confirm_load_module(state: ModuleState) -> bool {
     }
 }
 
-fn show_error(text: &str) {
+fn show_error(text: &str, language: UiLanguage) {
+    let title = format!(
+        "--title={}",
+        language.pick("模块加载失败", "Module loading failed")
+    );
     if matches!(
-        run_zenity(&["--error", "--title=模块加载失败", &format!("--text={text}"),]),
+        run_zenity(&["--error", &title, &format!("--text={text}"),]),
         DialogResult::Accepted | DialogResult::Rejected
     ) {
         return;
     }
     if matches!(
-        run_kdialog(&["--error", text, "--title", "模块加载失败"]),
+        run_kdialog(&[
+            "--error",
+            text,
+            "--title",
+            language.pick("模块加载失败", "Module loading failed"),
+        ]),
         DialogResult::Accepted | DialogResult::Rejected
     ) {
         return;
@@ -148,7 +183,7 @@ fn run_dialog(program: &str, args: &[&str]) -> DialogResult {
     }
 }
 
-fn load_module_with_auth() -> Result<(), String> {
+fn load_module_with_auth(language: UiLanguage) -> Result<(), String> {
     let module_path = module_path_candidate()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
@@ -175,7 +210,10 @@ exit 1
         .arg("clevo-control-center-module-loader")
         .arg(module_path)
         .output()
-        .map_err(|err| format!("无法启动 pkexec：{err}"))?;
+        .map_err(|err| match language {
+            UiLanguage::SimplifiedChinese => format!("无法启动 pkexec：{err}"),
+            UiLanguage::English => format!("Could not start pkexec: {err}"),
+        })?;
 
     if output.status.success() {
         return Ok(());
@@ -185,7 +223,10 @@ exit 1
     let stderr = String::from_utf8_lossy(&output.stderr);
     let detail = format!("{stdout}{stderr}").trim().to_owned();
     if detail.is_empty() {
-        Err(format!("pkexec 返回 {}", output.status))
+        Err(match language {
+            UiLanguage::SimplifiedChinese => format!("pkexec 返回 {}", output.status),
+            UiLanguage::English => format!("pkexec returned {}", output.status),
+        })
     } else {
         Err(detail)
     }

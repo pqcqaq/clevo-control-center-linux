@@ -10,6 +10,7 @@ use crate::battery_strategy::BatteryStrategySettings;
 use crate::dchu::HardwareSnapshot;
 use crate::fan_curve::FanCurveSettings;
 use crate::model::{default_zones, normalize_zones, LightingConfig, Mode, Rgb, ZoneId};
+use crate::preferences::{LanguagePreference, ThemeColor};
 
 pub const APP_ID: &str = "clevo-control-center";
 const LEGACY_APP_ID: &str = "clevo-keyboard-led";
@@ -31,6 +32,10 @@ pub struct Settings {
     pub fan_curves: FanCurveSettings,
     #[serde(default)]
     pub battery_strategy: BatteryStrategySettings,
+    #[serde(default)]
+    pub language: LanguagePreference,
+    #[serde(default)]
+    pub theme_color: ThemeColor,
     pub window_pos: Option<[f32; 2]>,
 }
 
@@ -43,6 +48,8 @@ impl Default for Settings {
             zones: default_zones(),
             fan_curves: FanCurveSettings::default(),
             battery_strategy: BatteryStrategySettings::default(),
+            language: LanguagePreference::default(),
+            theme_color: ThemeColor::default(),
             window_pos: None,
         }
     }
@@ -267,6 +274,8 @@ mod tests {
                 charge_stop_percent: 80,
                 ..BatteryStrategySettings::default()
             },
+            language: LanguagePreference::English,
+            theme_color: ThemeColor::Cyan,
             window_pos: Some([100.0, 200.0]),
         };
 
@@ -288,6 +297,8 @@ mod tests {
         assert_eq!(parsed.fan_curves.selected_profile, Some(1));
         assert!(parsed.battery_strategy.enabled);
         assert_eq!(parsed.battery_strategy.charge_stop_percent, 80);
+        assert_eq!(parsed.language, LanguagePreference::English);
+        assert_eq!(parsed.theme_color, ThemeColor::Cyan);
         assert_eq!(parsed.window_pos, Some([100.0, 200.0]));
     }
 
@@ -308,6 +319,8 @@ mod tests {
                 charge_stop_percent: 60,
                 ..BatteryStrategySettings::default()
             },
+            language: LanguagePreference::System,
+            theme_color: ThemeColor::Amber,
             window_pos: Some([f32::NAN, 10.0]),
         }
         .sanitized();
@@ -352,6 +365,8 @@ mod tests {
         let settings = parse_settings(json).unwrap().sanitized();
 
         assert_eq!(settings.brightness, 75);
+        assert_eq!(settings.language, LanguagePreference::System);
+        assert_eq!(settings.theme_color, ThemeColor::Amber);
     }
 
     #[test]

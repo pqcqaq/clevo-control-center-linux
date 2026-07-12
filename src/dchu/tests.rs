@@ -150,6 +150,54 @@ fn parses_dchu_config_reply() {
 }
 
 #[test]
+fn keyboard_type_distinguishes_single_three_zone_and_per_key_layouts() {
+    let mut config = DchuConfig {
+        kbtp: Some(6),
+        psf2: Some((1 << 18) | (1 << 12)),
+        ..DchuConfig::default()
+    };
+    assert_eq!(
+        config.keyboard_lighting_capabilities(),
+        KeyboardLightingCapabilities {
+            layout: KeyboardLightingLayout::SingleZone,
+            logo: Some(true),
+            lightbar: Some(true),
+        }
+    );
+
+    config.kbtp = Some(2);
+    assert_eq!(
+        config.keyboard_lighting_capabilities().layout,
+        KeyboardLightingLayout::ThreeZone
+    );
+
+    for keyboard_type in [3, 19, 35, 51, 243] {
+        config.kbtp = Some(keyboard_type);
+        assert_eq!(
+            config.keyboard_lighting_capabilities().layout,
+            KeyboardLightingLayout::PerKey
+        );
+    }
+}
+
+#[test]
+fn raw_keyboard_type_takes_precedence_over_compatibility_field() {
+    let mut raw_config = vec![0; 16];
+    raw_config[15] = 22;
+    let config = DchuConfig {
+        kbtp: Some(2),
+        raw_config,
+        ..DchuConfig::default()
+    };
+
+    assert_eq!(config.keyboard_type(), Some(22));
+    assert_eq!(
+        config.keyboard_lighting_capabilities().layout,
+        KeyboardLightingLayout::SingleZone
+    );
+}
+
+#[test]
 fn gpu_mux_modes_keep_write_targets_available() {
     let snapshot = HardwareSnapshot {
         fans: Vec::new(),

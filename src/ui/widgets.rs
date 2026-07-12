@@ -9,6 +9,7 @@ use eframe::egui::{
 };
 
 use super::app::ClevoLedApp;
+use super::theme;
 use crate::dchu::HardwareSnapshot;
 
 pub(super) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
@@ -26,7 +27,7 @@ pub(super) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
     ui.add_space(14.0);
 }
 
-pub(super) fn toggle_switch(ui: &mut Ui, enabled: bool) -> bool {
+pub(super) fn toggle_switch(ui: &mut Ui, enabled: bool, palette: theme::Palette) -> bool {
     let desired_size = vec2(48.0, 24.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
     let t = ui
@@ -35,14 +36,10 @@ pub(super) fn toggle_switch(ui: &mut Ui, enabled: bool) -> bool {
     let hover_t =
         ui.ctx()
             .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-    let fill = mix_color(
-        Color32::from_rgb(49, 45, 37),
-        Color32::from_rgb(138, 88, 33),
-        t,
-    );
-    let stroke = mix_color(
+    let fill = theme::mix(Color32::from_rgb(49, 45, 37), palette.surface, t);
+    let stroke = theme::mix(
         Color32::from_rgb(72, 64, 52),
-        Color32::from_rgb(235, 168, 80),
+        palette.strong,
         t.max(hover_t * 0.5),
     );
     let painter = ui.painter_at(rect.expand(3.0));
@@ -57,17 +54,6 @@ pub(super) fn toggle_switch(ui: &mut Ui, enabled: bool) -> bool {
         Stroke::new(1.0, Color32::from_rgb(34, 30, 25)),
     );
     response.clicked()
-}
-
-fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(
-        mix(from.r(), to.r()),
-        mix(from.g(), to.g()),
-        mix(from.b(), to.b()),
-        mix(from.a(), to.a()),
-    )
 }
 
 #[cfg(debug_assertions)]
@@ -95,13 +81,23 @@ pub(super) fn command_panel(ui: &mut Ui, app: &mut ClevoLedApp) {
 pub(super) fn hardware_details(ui: &mut Ui, app: &ClevoLedApp) {
     if let Some(snapshot) = &app.hardware {
         ui.label(
-            RichText::new(snapshot_age_text(snapshot))
+            RichText::new(snapshot_age_text(snapshot, app.language))
                 .size(12.0)
                 .color(Color32::from_rgb(151, 145, 135)),
         );
         ui.add_space(8.0);
         for fan in &snapshot.fans {
-            ui.label(format!("{}: {} RPM", fan.label, fan.rpm));
+            let label = if app.language == crate::preferences::UiLanguage::English {
+                match fan.label.as_str() {
+                    "CPU 风扇" => "CPU fan",
+                    "GPU 风扇" => "GPU fan",
+                    "PCH 风扇" => "PCH fan",
+                    other => other,
+                }
+            } else {
+                &fan.label
+            };
+            ui.label(format!("{label}: {} RPM", fan.rpm));
         }
         ui.label(format!(
             "battery_voltage_raw: {}",
@@ -122,17 +118,27 @@ pub(super) fn hardware_details(ui: &mut Ui, app: &ClevoLedApp) {
                 .color(Color32::from_rgb(214, 157, 105)),
         );
     } else {
-        ui.label("暂无硬件读回");
+        ui.label(app.language.pick("暂无硬件读回", "No hardware snapshot"));
     }
 }
 
-pub(super) fn snapshot_age_text(snapshot: &HardwareSnapshot) -> String {
+pub(super) fn snapshot_age_text(
+    snapshot: &HardwareSnapshot,
+    language: crate::preferences::UiLanguage,
+) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
     let age = now.saturating_sub(snapshot.updated_unix_secs);
-    format!("硬件状态更新于 {age} 秒前")
+    match language {
+        crate::preferences::UiLanguage::SimplifiedChinese => {
+            format!("硬件状态更新于 {age} 秒前")
+        }
+        crate::preferences::UiLanguage::English => {
+            format!("Hardware status updated {age} seconds ago")
+        }
+    }
 }
 
 pub fn install_cjk_font(ctx: &Context) {

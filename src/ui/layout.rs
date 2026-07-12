@@ -3,7 +3,7 @@ use eframe::egui::{
     Stroke, Ui,
 };
 
-use super::{app::ClevoLedApp, pages};
+use super::{app::ClevoLedApp, pages, theme};
 use crate::model::ControlPage;
 
 const SIDEBAR_CONTENT_WIDTH: f32 = 152.0;
@@ -26,6 +26,8 @@ pub(super) fn control_center(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
+    let language = app.language;
+    let palette = theme::palette(app.theme_color);
     Frame::none()
         .fill(Color32::from_rgb(24, 23, 21))
         .rounding(14.0)
@@ -36,7 +38,7 @@ fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
             ui.vertical(|ui| {
                 ui.add_space(2.0);
                 ui.label(
-                    RichText::new("蓝天控制中心")
+                    RichText::new(language.pick("蓝天控制中心", "Clevo Control Center"))
                         .size(18.0)
                         .strong()
                         .color(Color32::from_rgb(239, 234, 223)),
@@ -48,15 +50,15 @@ fn sidebar(ui: &mut Ui, app: &mut ClevoLedApp, height: f32) {
                 );
                 ui.add_space(22.0);
                 for page in ControlPage::all() {
-                    nav_button(ui, app, *page);
+                    nav_button(ui, app, *page, palette);
                     ui.add_space(NAV_BUTTON_GAP);
                 }
             });
         });
 }
 
-fn nav_button(ui: &mut Ui, app: &mut ClevoLedApp, page: ControlPage) {
-    let id = ui.make_persistent_id(("nav_button", page.label()));
+fn nav_button(ui: &mut Ui, app: &mut ClevoLedApp, page: ControlPage, palette: theme::Palette) {
+    let id = ui.make_persistent_id(("nav_button", page));
     let (rect, _) = ui.allocate_exact_size(
         vec2(SIDEBAR_CONTENT_WIDTH, NAV_BUTTON_HEIGHT),
         Sense::hover(),
@@ -67,7 +69,14 @@ fn nav_button(ui: &mut Ui, app: &mut ClevoLedApp, page: ControlPage) {
         app.active_page = page;
     }
 
-    draw_nav_button(ui, rect, &response, app.active_page == page, page.label());
+    draw_nav_button(
+        ui,
+        rect,
+        &response,
+        app.active_page == page,
+        page.localized_label(app.language),
+        palette,
+    );
 }
 
 fn draw_nav_button(
@@ -76,6 +85,7 @@ fn draw_nav_button(
     response: &egui::Response,
     selected: bool,
     label: &str,
+    palette: theme::Palette,
 ) {
     let hover_t =
         ui.ctx()
@@ -94,23 +104,15 @@ fn draw_nav_button(
         .shrink2(vec2(0.0, 1.0));
     let painter = ui.painter_at(rect.expand(7.0));
     let lift = hover_t.max(selected_t);
-    let fill = blend_color(
-        blend_color(
-            Color32::from_rgb(30, 29, 26),
-            Color32::from_rgb(58, 43, 24),
-            selected_t,
-        ),
+    let fill = theme::mix(
+        theme::mix(Color32::from_rgb(30, 29, 26), palette.surface, selected_t),
         Color32::from_rgb(46, 42, 35),
         hover_t * 0.55,
     );
-    let stroke = blend_color(
-        Color32::from_rgb(57, 52, 43),
-        Color32::from_rgb(221, 164, 91),
-        lift,
-    );
-    let text = blend_color(
+    let stroke = theme::mix(Color32::from_rgb(57, 52, 43), palette.border, lift);
+    let text = theme::mix(
         Color32::from_rgb(176, 170, 158),
-        Color32::from_rgb(255, 236, 201),
+        palette.text,
         (selected_t + hover_t * 0.55).clamp(0.0, 1.0),
     );
     let points = nav_button_points(rect, NAV_BUTTON_SKEW);
@@ -121,7 +123,12 @@ fn draw_nav_button(
     ));
 
     if lift > 0.0 {
-        let glow = Color32::from_rgba_unmultiplied(231, 166, 84, (44.0 * lift) as u8);
+        let glow = Color32::from_rgba_unmultiplied(
+            palette.accent.r(),
+            palette.accent.g(),
+            palette.accent.b(),
+            (44.0 * lift) as u8,
+        );
         painter.add(Shape::convex_polygon(
             nav_button_points(rect.expand(3.0), NAV_BUTTON_SKEW + 1.5).to_vec(),
             glow,
@@ -136,7 +143,12 @@ fn draw_nav_button(
     );
     painter.add(Shape::convex_polygon(
         nav_button_points(rail_rect, 3.0).to_vec(),
-        Color32::from_rgba_unmultiplied(231, 166, 84, (58.0 + 130.0 * selected_t) as u8),
+        Color32::from_rgba_unmultiplied(
+            palette.accent.r(),
+            palette.accent.g(),
+            palette.accent.b(),
+            (58.0 + 130.0 * selected_t) as u8,
+        ),
         Stroke::new(0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 0)),
     ));
 
@@ -148,7 +160,12 @@ fn draw_nav_button(
         ],
         Stroke::new(
             1.0,
-            Color32::from_rgba_unmultiplied(255, 226, 174, (22.0 + 48.0 * lift) as u8),
+            Color32::from_rgba_unmultiplied(
+                palette.bright.r(),
+                palette.bright.g(),
+                palette.bright.b(),
+                (22.0 + 48.0 * lift) as u8,
+            ),
         ),
     );
 
@@ -161,7 +178,12 @@ fn draw_nav_button(
             ],
             Stroke::new(
                 1.2,
-                Color32::from_rgba_unmultiplied(255, 231, 185, (94.0 * hover_t) as u8),
+                Color32::from_rgba_unmultiplied(
+                    palette.bright.r(),
+                    palette.bright.g(),
+                    palette.bright.b(),
+                    (94.0 * hover_t) as u8,
+                ),
             ),
         );
     }
@@ -174,7 +196,12 @@ fn draw_nav_button(
         ],
         Stroke::new(
             1.5,
-            Color32::from_rgba_unmultiplied(231, 166, 84, notch_alpha),
+            Color32::from_rgba_unmultiplied(
+                palette.accent.r(),
+                palette.accent.g(),
+                palette.accent.b(),
+                notch_alpha,
+            ),
         ),
     );
 
@@ -220,17 +247,6 @@ fn nav_button_points(rect: Rect, skew: f32) -> [Pos2; 4] {
     ]
 }
 
-fn blend_color(from: Color32, to: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let blend = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(
-        blend(from.r(), to.r()),
-        blend(from.g(), to.g()),
-        blend(from.b(), to.b()),
-        blend(from.a(), to.a()),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,16 +269,6 @@ mod tests {
         assert_eq!(points[1], pos2(110.0, 20.0));
         assert_eq!(points[2], pos2(98.0, 56.0));
         assert_eq!(points[3], pos2(10.0, 56.0));
-    }
-
-    #[test]
-    fn blend_color_clamps_interpolation() {
-        let from = Color32::from_rgb(10, 20, 30);
-        let to = Color32::from_rgb(110, 120, 130);
-
-        assert_eq!(blend_color(from, to, -1.0), from);
-        assert_eq!(blend_color(from, to, 2.0), to);
-        assert_eq!(blend_color(from, to, 0.5), Color32::from_rgb(60, 70, 80));
     }
 
     #[test]

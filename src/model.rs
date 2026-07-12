@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::preferences::UiLanguage;
+
 pub const BASE_ZONES: [ZoneId; 3] = [ZoneId::F0, ZoneId::F1, ZoneId::F2];
 pub const ALL_ZONES: [ZoneId; 7] = [
     ZoneId::F0,
@@ -41,10 +43,6 @@ impl ZoneId {
             Self::F6 => "f6",
         }
     }
-
-    pub fn label(self) -> &'static str {
-        self.proc_code()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -81,13 +79,13 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Custom => "自定义",
-            Self::Cycle => "循环",
-            Self::Wave => "波浪",
-            Self::Blink => "闪烁",
-            Self::Breathing => "呼吸",
+            Self::Custom => language.pick("自定义", "Custom"),
+            Self::Cycle => language.pick("循环", "Cycle"),
+            Self::Wave => language.pick("波浪", "Wave"),
+            Self::Blink => language.pick("闪烁", "Blink"),
+            Self::Breathing => language.pick("呼吸", "Breathing"),
         }
     }
 
@@ -102,7 +100,7 @@ impl Mode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum ControlPage {
     Overview,
     Lighting,
@@ -117,18 +115,18 @@ pub enum ControlPage {
 }
 
 impl ControlPage {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Overview => "总览",
-            Self::Lighting => "灯光",
-            Self::Fan => "风扇",
-            Self::Battery => "电池",
-            Self::Gpu => "显卡",
+            Self::Overview => language.pick("总览", "Overview"),
+            Self::Lighting => language.pick("灯光", "Lighting"),
+            Self::Fan => language.pick("风扇", "Fans"),
+            Self::Battery => language.pick("电池", "Battery"),
+            Self::Gpu => language.pick("显卡", "Graphics"),
             #[cfg(debug_assertions)]
-            Self::Diagnostics => "诊断",
-            Self::Settings => "设置",
+            Self::Diagnostics => language.pick("诊断", "Diagnostics"),
+            Self::Settings => language.pick("设置", "Settings"),
             #[cfg(debug_assertions)]
-            Self::Advanced => "高级",
+            Self::Advanced => language.pick("高级", "Advanced"),
         }
     }
 
@@ -158,11 +156,11 @@ pub enum AdvancedTab {
 
 #[cfg(debug_assertions)]
 impl AdvancedTab {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Fans => "风扇信息",
-            Self::Temperatures => "温度信息",
-            Self::Other => "其他信息",
+            Self::Fans => language.pick("风扇信息", "Fan data"),
+            Self::Temperatures => language.pick("温度信息", "Temperatures"),
+            Self::Other => language.pick("其他信息", "Other"),
         }
     }
 
@@ -175,6 +173,11 @@ impl AdvancedTab {
 pub struct ZoneColor {
     pub zone: ZoneId,
     pub rgb: Rgb,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LightingFrame {
+    pub colors: Vec<ZoneColor>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

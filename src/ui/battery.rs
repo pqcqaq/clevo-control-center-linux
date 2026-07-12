@@ -11,7 +11,14 @@ use crate::battery_strategy::{
 };
 
 pub(super) fn battery_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "电池", "充电窗口与低电量保护");
+    page_header(
+        ui,
+        app.language.pick("电池", "Battery"),
+        app.language.pick(
+            "充电窗口与低电量保护",
+            "Charge window and low-battery protection",
+        ),
+    );
 
     Frame::none()
         .fill(Color32::from_rgb(28, 29, 28))
@@ -50,7 +57,7 @@ fn strategy_overview(ui: &mut Ui, app: &mut ClevoLedApp) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(
-                RichText::new("充电窗口")
+                RichText::new(app.language.pick("充电窗口", "Charge window"))
                     .size(12.0)
                     .color(Color32::from_rgb(145, 153, 148)),
             );
@@ -72,9 +79,9 @@ fn strategy_overview(ui: &mut Ui, app: &mut ClevoLedApp) {
             }
             ui.label(
                 RichText::new(if app.battery_strategy.enabled {
-                    "策略已启用"
+                    app.language.pick("策略已启用", "Policy enabled")
                 } else {
-                    "策略未启用"
+                    app.language.pick("策略未启用", "Policy disabled")
                 })
                 .size(13.0)
                 .color(if app.battery_strategy.enabled {
@@ -91,6 +98,7 @@ fn strategy_overview(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn charge_window_meter(ui: &mut Ui, app: &ClevoLedApp) {
+    let language = app.language;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::hover());
     let painter = ui.painter_at(rect);
     let track = Rect::from_min_max(
@@ -136,13 +144,13 @@ fn charge_window_meter(ui: &mut Ui, app: &ClevoLedApp) {
     for (x, label, value, alignment) in [
         (
             start_x,
-            "开始",
+            language.pick("开始", "Start"),
             app.battery_strategy.charge_start_percent,
             Align2::RIGHT_BOTTOM,
         ),
         (
             stop_x,
-            "停止",
+            language.pick("停止", "Stop"),
             app.battery_strategy.charge_stop_percent,
             Align2::LEFT_BOTTOM,
         ),
@@ -168,7 +176,13 @@ fn charge_window_meter(ui: &mut Ui, app: &ClevoLedApp) {
 }
 
 fn preset_selector(ui: &mut Ui, app: &mut ClevoLedApp) {
-    section_title(ui, "策略预设", app.battery_strategy.preset.description());
+    section_title(
+        ui,
+        app.language.pick("策略预设", "Policy presets"),
+        app.battery_strategy
+            .preset
+            .localized_description(app.language),
+    );
     ui.add_space(10.0);
 
     ui.horizontal(|ui| {
@@ -176,7 +190,7 @@ fn preset_selector(ui: &mut Ui, app: &mut ClevoLedApp) {
         let width = ((ui.available_width() - 16.0) / 3.0).max(96.0);
         for preset in BatteryStrategyPreset::all() {
             let selected = app.battery_strategy.preset == *preset;
-            let id = ui.make_persistent_id(("battery_preset", preset.label()));
+            let id = ui.make_persistent_id(("battery_preset", *preset));
             let (rect, _) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
             let response = ui.interact(rect, id, Sense::click());
             let hover_t = ui.ctx().animate_bool_with_time(
@@ -203,7 +217,7 @@ fn preset_selector(ui: &mut Ui, app: &mut ClevoLedApp) {
             painter.text(
                 pos2(rect.center().x, rect.center().y - 7.0),
                 Align2::CENTER_CENTER,
-                preset.label(),
+                preset.localized_label(app.language),
                 FontId::proportional(13.0),
                 Color32::from_rgb(231, 237, 233),
             );
@@ -228,7 +242,12 @@ fn preset_selector(ui: &mut Ui, app: &mut ClevoLedApp) {
 }
 
 fn threshold_section(ui: &mut Ui, app: &mut ClevoLedApp) {
-    section_title(ui, "充电阈值", "控制电池保持区间");
+    let language = app.language;
+    section_title(
+        ui,
+        language.pick("充电阈值", "Charge thresholds"),
+        language.pick("控制电池保持区间", "Set the battery maintenance range"),
+    );
     ui.add_space(10.0);
 
     let start_max =
@@ -237,7 +256,7 @@ fn threshold_section(ui: &mut Ui, app: &mut ClevoLedApp) {
     let mut changed = false;
     changed |= threshold_control(
         ui,
-        "开始充电",
+        language.pick("开始充电", "Start charging"),
         &mut app.battery_strategy.charge_start_percent,
         CHARGE_START_MIN,
         start_max,
@@ -245,7 +264,7 @@ fn threshold_section(ui: &mut Ui, app: &mut ClevoLedApp) {
     ui.add_space(10.0);
     changed |= threshold_control(
         ui,
-        "停止充电",
+        language.pick("停止充电", "Stop charging"),
         &mut app.battery_strategy.charge_stop_percent,
         stop_min,
         CHARGE_STOP_MAX,
@@ -278,18 +297,26 @@ fn threshold_control(ui: &mut Ui, label: &str, value: &mut u8, min: u8, max: u8)
 }
 
 fn protection_section(ui: &mut Ui, app: &mut ClevoLedApp) {
-    section_title(ui, "保护行为", "电池供电与低电量响应");
+    let language = app.language;
+    section_title(
+        ui,
+        language.pick("保护行为", "Protection behavior"),
+        language.pick(
+            "电池供电与低电量响应",
+            "Battery-power and low-charge response",
+        ),
+    );
     ui.add_space(8.0);
 
     let mut changed = false;
     changed |= setting_row(
         ui,
-        "电池供电节能",
+        language.pick("电池供电节能", "Save power on battery"),
         &mut app.battery_strategy.energy_save_on_battery,
     );
     changed |= setting_row(
         ui,
-        "低电量保护",
+        language.pick("低电量保护", "Low-battery protection"),
         &mut app.battery_strategy.low_battery_protection,
     );
 
@@ -297,7 +324,7 @@ fn protection_section(ui: &mut Ui, app: &mut ClevoLedApp) {
         ui.add_space(6.0);
         changed |= threshold_control(
             ui,
-            "触发阈值",
+            language.pick("触发阈值", "Trigger threshold"),
             &mut app.battery_strategy.low_battery_threshold_percent,
             LOW_BATTERY_MIN,
             LOW_BATTERY_MAX,
@@ -305,7 +332,7 @@ fn protection_section(ui: &mut Ui, app: &mut ClevoLedApp) {
         ui.add_space(4.0);
         changed |= setting_row(
             ui,
-            "同步降低键盘亮度",
+            language.pick("同步降低键盘亮度", "Reduce keyboard brightness"),
             &mut app.battery_strategy.reduce_keyboard_brightness,
         );
     }
@@ -384,7 +411,12 @@ fn capability_status(ui: &mut Ui, app: &ClevoLedApp) {
         .and_then(|snapshot| snapshot.dchu_config.as_ref());
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(14.0, 6.0);
-        status_item(ui, "配置", Some(true), "本地");
+        status_item(
+            ui,
+            app.language.pick("配置", "Configuration"),
+            Some(true),
+            app.language.pick("本地", "Local"),
+        );
         status_item(
             ui,
             "Battery Utility",

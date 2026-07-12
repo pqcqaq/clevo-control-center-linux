@@ -5,8 +5,9 @@ use eframe::egui::{
 };
 
 use crate::dchu::FanStatus;
+use crate::preferences::UiLanguage;
 
-pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
+pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32, language: UiLanguage) {
     const GAUGE_HEIGHT: f32 = 266.0;
 
     ui.allocate_ui_with_layout(
@@ -15,7 +16,7 @@ pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
         |ui| {
             ui.set_width(width);
             ui.label(
-                RichText::new(&fan.label)
+                RichText::new(localized_fan_label(&fan.label, language))
                     .size(15.0)
                     .strong()
                     .color(Color32::from_rgb(236, 230, 218)),
@@ -25,7 +26,7 @@ pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
             draw_fan_gauge(ui, rect, fan);
             ui.add_space(6.0);
             ui.label(
-                RichText::new(fan_temperature_text(fan))
+                RichText::new(fan_temperature_text(fan, language))
                     .size(13.0)
                     .strong()
                     .color(Color32::from_rgb(222, 214, 199)),
@@ -34,10 +35,24 @@ pub(super) fn fan_gauge(ui: &mut Ui, fan: &FanStatus, width: f32) {
     );
 }
 
-fn fan_temperature_text(fan: &FanStatus) -> String {
-    match fan.temperature_celsius {
-        Some(temp) => format!("温度 {temp}°C"),
-        None => "温度 --°C".to_owned(),
+fn localized_fan_label(label: &str, language: UiLanguage) -> &str {
+    if language == UiLanguage::SimplifiedChinese {
+        return label;
+    }
+    match label {
+        "CPU 风扇" => "CPU fan",
+        "GPU 风扇" => "GPU fan",
+        "PCH 风扇" => "PCH fan",
+        _ => label,
+    }
+}
+
+fn fan_temperature_text(fan: &FanStatus, language: UiLanguage) -> String {
+    match (fan.temperature_celsius, language) {
+        (Some(temp), UiLanguage::SimplifiedChinese) => format!("温度 {temp}°C"),
+        (None, UiLanguage::SimplifiedChinese) => "温度 --°C".to_owned(),
+        (Some(temp), UiLanguage::English) => format!("Temperature {temp}°C"),
+        (None, UiLanguage::English) => "Temperature --°C".to_owned(),
     }
 }
 
@@ -198,22 +213,40 @@ mod tests {
     #[test]
     fn fan_temperature_text_formats_missing_and_present_values() {
         assert_eq!(
-            fan_temperature_text(&FanStatus {
-                label: "CPU 风扇".to_owned(),
-                raw_tach: 0,
-                rpm: 900,
-                temperature_celsius: Some(43),
-            }),
+            fan_temperature_text(
+                &FanStatus {
+                    label: "CPU 风扇".to_owned(),
+                    raw_tach: 0,
+                    rpm: 900,
+                    temperature_celsius: Some(43),
+                },
+                UiLanguage::SimplifiedChinese
+            ),
             "温度 43°C"
         );
         assert_eq!(
-            fan_temperature_text(&FanStatus {
-                label: "GPU 风扇".to_owned(),
-                raw_tach: 0,
-                rpm: 0,
-                temperature_celsius: None,
-            }),
+            fan_temperature_text(
+                &FanStatus {
+                    label: "GPU 风扇".to_owned(),
+                    raw_tach: 0,
+                    rpm: 0,
+                    temperature_celsius: None,
+                },
+                UiLanguage::SimplifiedChinese
+            ),
             "温度 --°C"
+        );
+        assert_eq!(
+            fan_temperature_text(
+                &FanStatus {
+                    label: "CPU 风扇".to_owned(),
+                    raw_tach: 0,
+                    rpm: 900,
+                    temperature_celsius: Some(43),
+                },
+                UiLanguage::English,
+            ),
+            "Temperature 43°C"
         );
     }
 }

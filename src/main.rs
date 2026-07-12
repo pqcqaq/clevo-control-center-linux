@@ -6,10 +6,12 @@ use egui::ViewportBuilder;
 
 mod battery_strategy;
 mod dchu;
+mod effects;
 mod fan_curve;
 mod hardware;
 mod model;
 mod module_loader;
+mod preferences;
 mod service;
 mod settings;
 mod ui;
@@ -31,13 +33,13 @@ fn main() -> eframe::Result {
     }
 
     let (settings_path, first_run) = settings::settings_path_and_first_run();
+    let settings = settings::load_settings(&settings_path);
     if !first_run {
-        if !module_loader::ensure_module_loaded_for_gui() {
+        if !module_loader::ensure_module_loaded_for_gui(settings.language.resolved()) {
             return Ok(());
         }
         service::ensure_service_running();
     }
-    let settings = settings::load_settings(&settings_path);
     let hardware_backend = hardware::native_backend();
 
     let mut viewport = ViewportBuilder::default()
@@ -61,6 +63,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             ui::install_cjk_font(&cc.egui_ctx);
+            ui::apply_theme(&cc.egui_ctx, settings.theme_color);
             Ok(Box::new(ui::ClevoLedApp::new(
                 settings_path,
                 settings,

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::preferences::UiLanguage;
+
 pub const CHARGE_START_MIN: u8 = 40;
 pub const CHARGE_START_MAX: u8 = 95;
 pub const CHARGE_STOP_MIN: u8 = 50;
@@ -7,7 +9,7 @@ pub const CHARGE_STOP_MAX: u8 = 100;
 pub const LOW_BATTERY_MIN: u8 = 5;
 pub const LOW_BATTERY_MAX: u8 = 50;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum BatteryStrategyPreset {
     #[serde(rename = "standard")]
     Standard,
@@ -18,19 +20,28 @@ pub enum BatteryStrategyPreset {
 }
 
 impl BatteryStrategyPreset {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Standard => "标准",
-            Self::Care => "保养",
-            Self::Endurance => "续航",
+            Self::Standard => language.pick("标准", "Standard"),
+            Self::Care => language.pick("保养", "Care"),
+            Self::Endurance => language.pick("续航", "Endurance"),
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub fn localized_description(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Standard => "接近原厂默认，尽量保持满电。",
-            Self::Care => "降低长期满电时间，适合长期插电。",
-            Self::Endurance => "更激进地限制充电上限，偏向电池寿命。",
+            Self::Standard => language.pick(
+                "接近原厂默认，尽量保持满电。",
+                "Near the factory default and keeps the battery topped up.",
+            ),
+            Self::Care => language.pick(
+                "降低长期满电时间，适合长期插电。",
+                "Reduces time spent fully charged for plugged-in use.",
+            ),
+            Self::Endurance => language.pick(
+                "更激进地限制充电上限，偏向电池寿命。",
+                "Uses a lower charge ceiling to prioritize battery lifespan.",
+            ),
         }
     }
 

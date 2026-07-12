@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::preferences::UiLanguage;
+
 pub const FAN_CURVE_COUNT: usize = 3;
 pub const FAN_CURVE_POINT_COUNT: usize = 4;
 pub const FAN_CURVE_MIN_TEMP: u8 = 30;
@@ -14,10 +16,10 @@ pub enum FanCurveChannel {
 }
 
 impl FanCurveChannel {
-    pub fn label(self) -> &'static str {
+    pub fn localized_label(self, language: UiLanguage) -> &'static str {
         match self {
-            Self::Cpu => "CPU 曲线",
-            Self::Gpu => "GPU 曲线",
+            Self::Cpu => language.pick("CPU 曲线", "CPU curve"),
+            Self::Gpu => language.pick("GPU 曲线", "GPU curve"),
         }
     }
 }
@@ -175,12 +177,12 @@ impl FanCurveSettings {
         self
     }
 
-    pub fn profile_label(index: usize) -> &'static str {
+    pub fn localized_profile_label(index: usize, language: UiLanguage) -> &'static str {
         match index {
-            0 => "曲线 1",
-            1 => "曲线 2",
-            2 => "曲线 3",
-            _ => "曲线",
+            0 => language.pick("曲线 1", "Curve 1"),
+            1 => language.pick("曲线 2", "Curve 2"),
+            2 => language.pick("曲线 3", "Curve 3"),
+            _ => language.pick("曲线", "Curve"),
         }
     }
 

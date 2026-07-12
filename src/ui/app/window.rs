@@ -12,6 +12,7 @@ const BODY_HORIZONTAL_MARGIN: f32 = 12.0;
 
 impl eframe::App for ClevoLedApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        crate::ui::theme::apply(ctx, self.theme_color);
         if self.first_run_pending {
             CentralPanel::default()
                 .frame(Frame::none().fill(Color32::from_rgb(20, 20, 18)))
@@ -72,6 +73,7 @@ fn first_run_backdrop(ui: &mut Ui) {
 }
 
 fn first_run_disclaimer_dialog(ctx: &Context, app: &mut ClevoLedApp) {
+    let language = app.language;
     eframe::egui::Window::new("first_run_disclaimer")
         .title_bar(false)
         .collapsible(false)
@@ -92,12 +94,18 @@ fn first_run_disclaimer_dialog(ctx: &Context, app: &mut ClevoLedApp) {
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new("首次启动 · 使用前确认")
+                        RichText::new(language.pick(
+                            "首次启动 · 使用前确认",
+                            "FIRST LAUNCH · CONFIRM BEFORE USE",
+                        ))
                             .size(11.0)
                             .color(Color32::from_rgb(205, 151, 83)),
                     );
                     ui.label(
-                        RichText::new("硬件控制免责声明")
+                        RichText::new(language.pick(
+                            "硬件控制免责声明",
+                            "Hardware Control Disclaimer",
+                        ))
                             .size(22.0)
                             .strong()
                             .color(Color32::from_rgb(244, 236, 221)),
@@ -108,23 +116,35 @@ fn first_run_disclaimer_dialog(ctx: &Context, app: &mut ClevoLedApp) {
             ui.add_space(16.0);
             disclaimer_section(
                 ui,
-                "非官方项目",
-                "本软件由社区独立开发，与 Clevo、蓝天电脑及其品牌商不存在隶属、授权或担保关系。",
+                language.pick("非官方项目", "Unofficial project"),
+                language.pick(
+                    "本软件由社区独立开发，与 Clevo、蓝天电脑及其品牌商不存在隶属、授权或担保关系。",
+                    "This community-developed software is not affiliated with, authorized by, or warranted by Clevo or any Clevo system vendor.",
+                ),
             );
             disclaimer_section(
                 ui,
-                "固件级操作",
-                "程序会通过内核模块访问 DCHU、EC 与固件接口，并可能改变灯光、风扇、功耗和显卡切换等硬件状态。错误操作可能导致系统不稳定、无法启动、数据损坏或不可逆的硬件影响。",
+                language.pick("固件级操作", "Firmware-level access"),
+                language.pick(
+                    "程序会通过内核模块访问 DCHU、EC 与固件接口，并可能改变灯光、风扇、功耗和显卡切换等硬件状态。错误操作可能导致系统不稳定、无法启动、数据损坏或不可逆的硬件影响。",
+                    "The kernel module accesses DCHU, EC, and firmware interfaces to change lighting, fans, power, and graphics state. Incorrect operation can cause instability, boot failure, data loss, or irreversible hardware impact.",
+                ),
             );
             disclaimer_section(
                 ui,
-                "兼容性边界",
-                "仅在确认设备属于兼容的蓝天/Clevo 系机型，并了解 BIOS/EC 恢复方法后使用。非蓝天系机器、未经验证的 BIOS/EC 或虚拟机环境请勿继续。",
+                language.pick("兼容性边界", "Compatibility boundary"),
+                language.pick(
+                    "仅在确认设备属于兼容的蓝天/Clevo 系机型，并了解 BIOS/EC 恢复方法后使用。非蓝天系机器、未经验证的 BIOS/EC 或虚拟机环境请勿继续。",
+                    "Continue only on a compatible Clevo-family system and only if you understand BIOS/EC recovery. Do not continue on non-Clevo hardware, an unverified BIOS/EC, or a virtual machine.",
+                ),
             );
 
             ui.add_space(4.0);
             ui.label(
-                RichText::new("继续使用即表示你理解上述风险，并自行承担由硬件控制操作产生的后果。")
+                RichText::new(language.pick(
+                    "继续使用即表示你理解上述风险，并自行承担由硬件控制操作产生的后果。",
+                    "By continuing, you acknowledge these risks and accept responsibility for hardware-control operations.",
+                ))
                     .size(12.0)
                     .strong()
                     .color(Color32::from_rgb(221, 183, 130)),
@@ -143,9 +163,12 @@ fn first_run_disclaimer_dialog(ctx: &Context, app: &mut ClevoLedApp) {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
                     .add_sized(
-                        vec2(184.0, 38.0),
+                        vec2(200.0, 38.0),
                         Button::new(
-                            RichText::new("我已了解，继续使用")
+                            RichText::new(language.pick(
+                                "我已了解，继续使用",
+                                "I understand and continue",
+                            ))
                                 .size(13.0)
                                 .strong()
                                 .color(Color32::from_rgb(255, 240, 214)),
@@ -159,7 +182,10 @@ fn first_run_disclaimer_dialog(ctx: &Context, app: &mut ClevoLedApp) {
                 }
                 ui.add_space(10.0);
                 if ui
-                    .add_sized(vec2(104.0, 38.0), Button::new("退出程序"))
+                    .add_sized(
+                        vec2(104.0, 38.0),
+                        Button::new(language.pick("退出程序", "Exit")),
+                    )
                     .clicked()
                 {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -232,7 +258,8 @@ fn gpu_mux_confirm_dialog(ctx: &Context, app: &mut ClevoLedApp) {
         return;
     };
 
-    eframe::egui::Window::new("确认重启")
+    let language = app.language;
+    eframe::egui::Window::new(language.pick("确认重启", "Confirm restart"))
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
@@ -246,28 +273,44 @@ fn gpu_mux_confirm_dialog(ctx: &Context, app: &mut ClevoLedApp) {
         .show(ctx, |ui| {
             ui.set_width(360.0);
             ui.label(
-                RichText::new(format!("切换到{}", mode.label()))
+                RichText::new(match language {
+                    crate::preferences::UiLanguage::SimplifiedChinese => {
+                        format!("切换到{}", mode.localized_label(language))
+                    }
+                    crate::preferences::UiLanguage::English => {
+                        format!("Switch to {}", mode.localized_label(language))
+                    }
+                })
                     .size(18.0)
                     .strong()
                     .color(Color32::from_rgb(244, 235, 219)),
             );
             ui.add_space(8.0);
             ui.label(
-                RichText::new("该设置会写入固件，必须重启后生效。确认后会立即写入并重启。")
+                RichText::new(language.pick(
+                    "该设置会写入固件，必须重启后生效。确认后会立即写入并重启。",
+                    "This setting is written to firmware and requires a restart. Confirming writes the setting and restarts now.",
+                ))
                     .size(13.0)
                     .color(Color32::from_rgb(194, 185, 171)),
             );
             ui.add_space(18.0);
             ui.horizontal(|ui| {
                 if ui
-                    .add_sized(vec2(112.0, 34.0), Button::new("取消"))
+                    .add_sized(
+                        vec2(112.0, 34.0),
+                        Button::new(language.pick("取消", "Cancel")),
+                    )
                     .clicked()
                 {
                     app.cancel_gpu_mux_switch();
                 }
                 ui.add_space(10.0);
                 if ui
-                    .add_sized(vec2(150.0, 34.0), Button::new("写入并重启"))
+                    .add_sized(
+                        vec2(150.0, 34.0),
+                        Button::new(language.pick("写入并重启", "Apply and restart")),
+                    )
                     .clicked()
                 {
                     app.confirm_gpu_mux_switch_and_reboot();

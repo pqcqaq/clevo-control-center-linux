@@ -6,14 +6,18 @@ use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::battery_strategy::BatteryStrategySettings;
-use crate::dchu::{self, FanMode, GpuMuxMode, HardwareSnapshot, PowerMode};
+use crate::dchu::{
+    self, FanMode, GpuMuxMode, HardwareSnapshot, KeyboardLightingCapabilities,
+    KeyboardLightingLayout, PowerMode,
+};
 use crate::fan_curve::{
     default_fan_curve_profiles, FanCurveSelection, FanCurveSettings, FAN_CURVE_COUNT,
 };
 use crate::hardware::HardwareBackend;
 #[cfg(debug_assertions)]
 use crate::model::AdvancedTab;
-use crate::model::{normalize_zones, ControlPage, Mode, Rgb, ZoneId};
+use crate::model::{normalize_zones, ControlPage, Mode, Rgb, ZoneId, BASE_ZONES};
+use crate::preferences::{LanguagePreference, ThemeColor, UiLanguage};
 use crate::settings::{
     atomic_write_hardware_snapshot, file_modified, hardware_snapshot_path, Settings,
 };
@@ -39,6 +43,9 @@ pub struct ClevoLedApp {
     pub(super) fan_curve_tab: usize,
     pub(super) fan_curve_selection: Option<FanCurveSelection>,
     pub(super) battery_strategy: BatteryStrategySettings,
+    pub(super) language_preference: LanguagePreference,
+    pub(super) language: UiLanguage,
+    pub(super) theme_color: ThemeColor,
     pub(super) last_error: Option<String>,
     pub(super) command_output: String,
     pub(super) command_status: Option<String>,
@@ -59,6 +66,7 @@ impl ClevoLedApp {
         hardware_backend: Box<dyn HardwareBackend>,
         first_run: bool,
     ) -> Self {
+        let language = settings.language.resolved();
         let hardware_snapshot_path = hardware_snapshot_path();
         let hardware = if first_run {
             None
@@ -70,7 +78,11 @@ impl ClevoLedApp {
         };
         let hardware_snapshot_mtime = file_modified(&hardware_snapshot_path);
         let hardware_status = if hardware.is_none() {
-            Some("正在等待风扇数据".to_owned())
+            Some(
+                language
+                    .pick("正在等待风扇数据", "Waiting for fan data")
+                    .to_owned(),
+            )
         } else {
             None
         };
@@ -95,6 +107,9 @@ impl ClevoLedApp {
             fan_curve_tab: 0,
             fan_curve_selection: None,
             battery_strategy: settings.battery_strategy,
+            language_preference: settings.language,
+            language,
+            theme_color: settings.theme_color,
             last_error: None,
             command_output: String::new(),
             command_status: None,
@@ -115,7 +130,7 @@ impl ClevoLedApp {
         if self.hardware_runtime_started {
             return;
         }
-        if !crate::module_loader::ensure_module_loaded_for_gui() {
+        if !crate::module_loader::ensure_module_loaded_for_gui(self.language) {
             return;
         }
         if !self.hardware_backend.lighting_ready() {
@@ -133,6 +148,8 @@ impl ClevoLedApp {
             zones: self.selected_zones(),
             fan_curves: self.fan_curves.clone(),
             battery_strategy: self.battery_strategy.clone(),
+            language: self.language_preference,
+            theme_color: self.theme_color,
             window_pos: self.window_pos,
         }
         .sanitized();
@@ -145,13 +162,74 @@ impl ClevoLedApp {
                 self.start_hardware_runtime();
             }
             Err(err) => {
-                self.first_run_error = Some(format!("无法保存首次启动确认：{err}"));
+                self.first_run_error = Some(match self.language {
+                    UiLanguage::SimplifiedChinese => {
+                        format!("无法保存首次启动确认：{err}")
+                    }
+                    UiLanguage::English => {
+                        format!("Could not save first-run confirmation: {err}")
+                    }
+                });
             }
         }
     }
 
     pub(super) fn selected_zones(&self) -> Vec<ZoneId> {
-        normalize_zones(&self.zones)
+        let capabilities = self.keyboard_lighting_capabilities();
+        let mut zones = match capabilities.layout {
+            KeyboardLightingLayout::SingleZone => vec![ZoneId::F0],
+            KeyboardLightingLayout::ThreeZone | KeyboardLightingLayout::Unknown => BASE_ZONES
+                .into_iter()
+                .filter(|zone| self.zones.contains(zone))
+                .collect(),
+            KeyboardLightingLayout::Unsupported
+            | KeyboardLightingLayout::White
+            | KeyboardLightingLayout::PerKey => normalize_zones(&self.zones),
+        };
+        if zones.is_empty() {
+            zones.extend(BASE_ZONES);
+        }
+        if capabilities.lightbar == Some(true) && self.zones.contains(&ZoneId::F3) {
+            zones.push(ZoneId::F3);
+        }
+        if capabilities.logo == Some(true) && self.zones.contains(&ZoneId::F6) {
+            zones.push(ZoneId::F6);
+        }
+        zones
+    }
+
+    pub(super) fn keyboard_lighting_capabilities(&self) -> KeyboardLightingCapabilities {
+        self.hardware
+            .as_ref()
+            .and_then(|snapshot| snapshot.dchu_config.as_ref())
+            .map(|config| config.keyboard_lighting_capabilities())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn set_language_preference(&mut self, preference: LanguagePreference) {
+        if self.language_preference == preference {
+            return;
+        }
+        self.language_preference = preference;
+        self.language = preference.resolved();
+        if self.hardware.is_none() {
+            self.hardware_status = Some(
+                self.language
+                    .pick("正在等待风扇数据", "Waiting for fan data")
+                    .to_owned(),
+            );
+        }
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
+    }
+
+    pub(super) fn set_theme_color(&mut self, theme_color: ThemeColor) {
+        if self.theme_color == theme_color {
+            return;
+        }
+        self.theme_color = theme_color;
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
     }
 
     pub(super) fn set_zone_enabled(&mut self, zone: ZoneId, enabled: bool) {
@@ -186,7 +264,11 @@ impl ClevoLedApp {
             return;
         };
         if let Err(err) = self.hardware_backend.set_fan_curve(&profile) {
-            self.command_status = Some("自定义曲线应用失败".to_owned());
+            self.command_status = Some(
+                self.language
+                    .pick("自定义曲线应用失败", "Could not apply custom curve")
+                    .to_owned(),
+            );
             self.command_output = err;
             return;
         }
@@ -194,7 +276,16 @@ impl ClevoLedApp {
         self.refresh_hardware_snapshot(false);
         self.fan_curves.selected_profile = Some(index);
         self.fan_curve_draft.selected_profile = Some(index);
-        self.command_status = Some(format!("已应用 {}", FanCurveSettings::profile_label(index)));
+        self.command_status = Some(match self.language {
+            UiLanguage::SimplifiedChinese => format!(
+                "已应用 {}",
+                FanCurveSettings::localized_profile_label(index, self.language)
+            ),
+            UiLanguage::English => format!(
+                "Applied {}",
+                FanCurveSettings::localized_profile_label(index, self.language)
+            ),
+        });
         self.mark_settings_dirty();
         self.persist_settings_if_due(true);
     }
@@ -254,14 +345,22 @@ impl ClevoLedApp {
                         self.hardware_snapshot_path.display()
                     );
                 }
-                self.command_status = Some("硬件状态读取完成".to_owned());
+                self.command_status = Some(
+                    self.language
+                        .pick("硬件状态读取完成", "Hardware status read successfully")
+                        .to_owned(),
+                );
                 self.command_output = snapshot.diagnostic_report();
                 self.hardware = Some(snapshot);
                 self.hardware_status = None;
                 self.hardware_snapshot_mtime = file_modified(&self.hardware_snapshot_path);
             }
             Err(err) => {
-                self.command_status = Some("硬件状态读取失败".to_owned());
+                self.command_status = Some(
+                    self.language
+                        .pick("硬件状态读取失败", "Could not read hardware status")
+                        .to_owned(),
+                );
                 self.command_output = err;
             }
         }
@@ -270,12 +369,23 @@ impl ClevoLedApp {
     pub(super) fn set_power_mode(&mut self, mode: PowerMode) {
         match self.hardware_backend.set_power_mode(mode) {
             Ok(()) => {
-                self.command_status = Some(format!("已切换到{}模式", mode.label()));
+                self.command_status = Some(match self.language {
+                    UiLanguage::SimplifiedChinese => {
+                        format!("已切换到{}模式", mode.localized_label(self.language))
+                    }
+                    UiLanguage::English => {
+                        format!("Switched to {} mode", mode.localized_label(self.language))
+                    }
+                });
                 self.command_output.clear();
                 self.refresh_hardware_snapshot(false);
             }
             Err(err) => {
-                self.command_status = Some("电源模式切换失败".to_owned());
+                self.command_status = Some(
+                    self.language
+                        .pick("电源模式切换失败", "Could not switch power mode")
+                        .to_owned(),
+                );
                 self.command_output = err;
             }
         }
@@ -284,12 +394,23 @@ impl ClevoLedApp {
     pub(super) fn set_fan_mode(&mut self, mode: FanMode) {
         match self.hardware_backend.set_fan_mode(mode) {
             Ok(()) => {
-                self.command_status = Some(format!("已切换到{}模式", mode.label()));
+                self.command_status = Some(match self.language {
+                    UiLanguage::SimplifiedChinese => {
+                        format!("已切换到{}模式", mode.localized_label(self.language))
+                    }
+                    UiLanguage::English => {
+                        format!("Switched to {} mode", mode.localized_label(self.language))
+                    }
+                });
                 self.command_output.clear();
                 self.refresh_hardware_snapshot(false);
             }
             Err(err) => {
-                self.command_status = Some("风扇模式切换失败".to_owned());
+                self.command_status = Some(
+                    self.language
+                        .pick("风扇模式切换失败", "Could not switch fan mode")
+                        .to_owned(),
+                );
                 self.command_output = err;
             }
         }
@@ -318,7 +439,11 @@ impl ClevoLedApp {
             return;
         };
         if let Err(err) = self.hardware_backend.set_gpu_mux(mode) {
-            self.command_status = Some("显卡模式写入失败".to_owned());
+            self.command_status = Some(
+                self.language
+                    .pick("显卡模式写入失败", "Could not write graphics mode")
+                    .to_owned(),
+            );
             self.command_output = err;
             return;
         }
@@ -326,7 +451,11 @@ impl ClevoLedApp {
         self.command_status = None;
         self.command_output.clear();
         if let Err(err) = request_system_reboot() {
-            self.command_status = Some("重启命令失败".to_owned());
+            self.command_status = Some(
+                self.language
+                    .pick("重启命令失败", "Could not start system restart")
+                    .to_owned(),
+            );
             self.command_output = err;
         }
     }
@@ -345,14 +474,25 @@ impl ClevoLedApp {
                 self.hardware = Some(snapshot);
                 self.hardware_snapshot_mtime = file_modified(&self.hardware_snapshot_path);
                 if user_visible {
-                    self.hardware_status = Some("硬件状态已更新".to_owned());
+                    self.hardware_status = Some(
+                        self.language
+                            .pick("硬件状态已更新", "Hardware status refreshed")
+                            .to_owned(),
+                    );
                 } else {
                     self.hardware_status = None;
                 }
             }
             Err(err) => {
                 if user_visible || self.hardware.is_none() {
-                    self.hardware_status = Some(format!("硬件状态暂不可用: {err}"));
+                    self.hardware_status = Some(match self.language {
+                        UiLanguage::SimplifiedChinese => {
+                            format!("硬件状态暂不可用: {err}")
+                        }
+                        UiLanguage::English => {
+                            format!("Hardware status is unavailable: {err}")
+                        }
+                    });
                 }
             }
         }

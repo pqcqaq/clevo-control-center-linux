@@ -5,11 +5,20 @@ use super::super::widgets::page_header;
 use crate::dchu::{available_gpu_mux_modes, selected_gpu_mux_mode_from_snapshot, GpuMuxMode};
 
 pub(super) fn gpu_page(ui: &mut Ui, app: &mut ClevoLedApp) {
-    page_header(ui, "显卡", "独显直连与混合模式切换");
+    page_header(
+        ui,
+        app.language.pick("显卡", "Graphics"),
+        app.language.pick(
+            "独显直连与混合模式切换",
+            "Switch between discrete and hybrid graphics",
+        ),
+    );
 
     let selected_mode = selected_gpu_mux_mode_from_snapshot(app.hardware.as_ref());
     let available_modes = available_gpu_mux_modes(app.hardware.as_ref());
-    let current_label = selected_mode.map(GpuMuxMode::label).unwrap_or("未知");
+    let current_label = selected_mode
+        .map(|mode| mode.localized_label(app.language))
+        .unwrap_or_else(|| app.language.pick("未知", "Unknown"));
 
     Frame::none()
         .fill(Color32::from_rgb(22, 24, 26))
@@ -17,7 +26,7 @@ pub(super) fn gpu_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         .stroke(Stroke::new(1.0, Color32::from_rgb(58, 66, 70)))
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            gpu_mux_status_strip(ui, current_label);
+            gpu_mux_status_strip(ui, current_label, app.language);
             ui.add_space(16.0);
 
             let available_width = ui.available_width();
@@ -65,7 +74,11 @@ pub(super) fn gpu_page(ui: &mut Ui, app: &mut ClevoLedApp) {
         });
 }
 
-fn gpu_mux_status_strip(ui: &mut Ui, current_label: &str) {
+fn gpu_mux_status_strip(
+    ui: &mut Ui,
+    current_label: &str,
+    language: crate::preferences::UiLanguage,
+) {
     let width = ui.available_width().max(1.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, 56.0), Sense::hover());
     let painter = ui.painter_at(rect.expand(4.0));
@@ -102,7 +115,7 @@ fn gpu_mux_status_strip(ui: &mut Ui, current_label: &str) {
     painter.text(
         pos2(rect.left() + 18.0, rect.center().y - 8.0),
         Align2::LEFT_CENTER,
-        "当前模式",
+        language.pick("当前模式", "Current mode"),
         FontId::proportional(13.0),
         Color32::from_rgb(152, 164, 164),
     );
@@ -139,7 +152,7 @@ fn gpu_mux_button_slot(
 ) {
     let enabled = available_modes.contains(&mode);
     let selected = selected_mode == Some(mode);
-    if gpu_mux_mode_button(ui, mode, selected, enabled, width) {
+    if gpu_mux_mode_button(ui, mode, selected, enabled, width, app.language) {
         app.request_gpu_mux_switch(mode);
     }
 }
@@ -150,6 +163,7 @@ fn gpu_mux_mode_button(
     selected: bool,
     enabled: bool,
     width: f32,
+    language: crate::preferences::UiLanguage,
 ) -> bool {
     let height = 236.0;
     let id = ui.make_persistent_id(("gpu_mux_mode", mode.value()));
@@ -229,14 +243,14 @@ fn gpu_mux_mode_button(
     painter.text(
         pos2(rect.left() + 22.0, rect.bottom() - 62.0),
         Align2::LEFT_CENTER,
-        mode.label(),
+        mode.localized_label(language),
         FontId::proportional(22.0),
         text,
     );
     painter.text(
         pos2(rect.left() + 22.0, rect.bottom() - 32.0),
         Align2::LEFT_CENTER,
-        gpu_mux_mode_description(mode),
+        gpu_mux_mode_description(mode, language),
         FontId::proportional(12.0),
         if enabled {
             Color32::from_rgb(151, 144, 130)
@@ -282,10 +296,19 @@ fn gpu_mux_mode_button(
     response.clicked() && enabled
 }
 
-fn gpu_mux_mode_description(mode: GpuMuxMode) -> &'static str {
+fn gpu_mux_mode_description(
+    mode: GpuMuxMode,
+    language: crate::preferences::UiLanguage,
+) -> &'static str {
     match mode {
-        GpuMuxMode::DGpu => "dGPU 直接连接显示输出",
-        GpuMuxMode::MSHybrid => "Intel 核显输出，独显按需介入",
+        GpuMuxMode::DGpu => language.pick(
+            "dGPU 直接连接显示输出",
+            "dGPU connects directly to the display output",
+        ),
+        GpuMuxMode::MSHybrid => language.pick(
+            "Intel 核显输出，独显按需介入",
+            "Intel graphics drives the display; dGPU engages on demand",
+        ),
     }
 }
 

@@ -3,17 +3,23 @@ use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::dchu::KeyboardLightingCapabilities;
+use crate::effects::LightingAnimator;
 use crate::hardware;
-use crate::model::LightingConfig;
 use crate::settings::{
     atomic_write_hardware_snapshot, hardware_snapshot_path, load_settings, service_lock_path,
     service_log_path, service_pid_path,
 };
 
-const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const SETTINGS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const HARDWARE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+// Target slightly below 16 ms so occasional ACPI latency does not pull the
+// measured animation rate below 60 FPS.
+const LIGHTING_FRAME_INTERVAL: Duration = Duration::from_millis(15);
 const LIGHTING_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 pub fn ensure_service_running() {
@@ -225,43 +231,131 @@ pub fn service_loop(settings_path: PathBuf) -> ! {
     let _lock = lock;
     let hardware = hardware::native_backend();
     let snapshot_path = hardware_snapshot_path();
-    let mut last_hardware_read = Instant::now() - Duration::from_secs(10);
-    let mut last_lighting: Option<LightingConfig> = None;
-    let mut lighting_applied = false;
-    let mut last_lighting_attempt = Instant::now() - LIGHTING_RETRY_INTERVAL;
+    let (snapshot_request_tx, snapshot_request_rx) = mpsc::sync_channel(1);
+    let (snapshot_result_tx, snapshot_result_rx) = mpsc::channel();
+    if let Err(err) = thread::Builder::new()
+        .name("clevo-hardware-snapshot".to_owned())
+        .spawn(move || {
+            let snapshot_hardware = hardware::native_backend();
+            while snapshot_request_rx.recv().is_ok() {
+                let result = snapshot_hardware.read_snapshot();
+                if let Ok(snapshot) = &result {
+                    if let Err(err) = atomic_write_hardware_snapshot(&snapshot_path, snapshot) {
+                        eprintln!("Hardware snapshot write failed: {err}");
+                    }
+                }
+                if snapshot_result_tx.send(result).is_err() {
+                    break;
+                }
+            }
+        })
+    {
+        eprintln!("Failed to start hardware snapshot worker: {err}");
+    }
+    let started_at = Instant::now();
+    let initial_lighting = load_settings(&settings_path).lighting_config();
+    let mut capabilities = KeyboardLightingCapabilities::default();
+    let mut animator = LightingAnimator::new(initial_lighting, capabilities, started_at);
+    let mut next_settings_read = started_at;
+    let mut next_hardware_read = started_at;
+    let mut next_frame = started_at;
+    let mut lighting_retry_at = started_at;
+    let mut brightness_dirty = true;
+    let mut frame_dirty = true;
 
     loop {
         let now = Instant::now();
-        let settings = load_settings(&settings_path);
-        let lighting = settings.lighting_config();
-        let lighting_changed = last_lighting.as_ref() != Some(&lighting);
-        let retry_due = !lighting_applied
-            && now.saturating_duration_since(last_lighting_attempt) >= LIGHTING_RETRY_INTERVAL;
-        if lighting_changed || retry_due {
-            last_lighting_attempt = now;
-            lighting_applied = match hardware.apply_lighting(&lighting) {
-                Ok(()) => true,
-                Err(err) => {
-                    eprintln!("Lighting service write failed: {err}");
-                    false
+
+        if now >= next_hardware_read {
+            if let Err(err) = snapshot_request_tx.try_send(()) {
+                if matches!(err, mpsc::TrySendError::Disconnected(_)) {
+                    eprintln!("Hardware snapshot worker is unavailable");
                 }
-            };
-            last_lighting = Some(lighting);
+            }
+            next_hardware_read = now + HARDWARE_POLL_INTERVAL;
         }
 
-        if last_hardware_read.elapsed() >= Duration::from_secs(2) {
-            match hardware.read_snapshot() {
+        while let Ok(result) = snapshot_result_rx.try_recv() {
+            match result {
                 Ok(snapshot) => {
-                    if let Err(err) = atomic_write_hardware_snapshot(&snapshot_path, &snapshot) {
-                        eprintln!("Hardware snapshot write failed: {err}");
+                    let detected = snapshot
+                        .dchu_config
+                        .as_ref()
+                        .map(|config| config.keyboard_lighting_capabilities())
+                        .unwrap_or_default();
+                    if detected != capabilities {
+                        capabilities = detected;
+                        let config = animator.config().clone();
+                        if animator.update(config, capabilities, now) {
+                            frame_dirty = true;
+                            next_frame = now;
+                            lighting_retry_at = now;
+                        }
                     }
                 }
                 Err(err) => eprintln!("Hardware snapshot read failed: {err}"),
             }
-            last_hardware_read = Instant::now();
         }
 
-        thread::sleep(SERVICE_POLL_INTERVAL);
+        if now >= next_settings_read {
+            let lighting = load_settings(&settings_path).lighting_config();
+            if animator.update(lighting, capabilities, now) {
+                brightness_dirty = true;
+                frame_dirty = true;
+                next_frame = now;
+                lighting_retry_at = now;
+            }
+            next_settings_read = now + SETTINGS_POLL_INTERVAL;
+        }
+
+        if now >= lighting_retry_at && brightness_dirty {
+            match hardware.set_lighting_brightness(animator.config().brightness_percent) {
+                Ok(()) => brightness_dirty = false,
+                Err(err) => {
+                    eprintln!("Lighting brightness write failed: {err}");
+                    lighting_retry_at = now + LIGHTING_RETRY_INTERVAL;
+                }
+            }
+        }
+
+        let dynamic_frame_due = animator.is_dynamic() && now >= next_frame;
+        if now >= lighting_retry_at && !brightness_dirty && (frame_dirty || dynamic_frame_due) {
+            let frame = animator.frame(now);
+            if frame.colors.is_empty() {
+                frame_dirty = false;
+            } else {
+                match hardware.apply_lighting_frame(&frame) {
+                    Ok(()) => frame_dirty = false,
+                    Err(err) => {
+                        eprintln!("Lighting frame write failed: {err}");
+                        lighting_retry_at = now + LIGHTING_RETRY_INTERVAL;
+                        frame_dirty = true;
+                    }
+                }
+            }
+
+            if animator.is_dynamic() {
+                next_frame += LIGHTING_FRAME_INTERVAL;
+                let frame_completed_at = Instant::now();
+                while next_frame <= frame_completed_at {
+                    next_frame += LIGHTING_FRAME_INTERVAL;
+                }
+            }
+        }
+
+        let mut next_deadline = next_settings_read.min(next_hardware_read);
+        if brightness_dirty || frame_dirty {
+            next_deadline = next_deadline.min(lighting_retry_at);
+        }
+        if animator.is_dynamic() && !brightness_dirty {
+            next_deadline = next_deadline.min(next_frame.max(lighting_retry_at));
+        }
+        let sleep_for = next_deadline.saturating_duration_since(Instant::now());
+        if sleep_for.is_zero() {
+            thread::yield_now();
+        } else {
+            thread::sleep(sleep_for);
+        }
     }
 }
 

@@ -4,6 +4,7 @@ use std::process::Command;
 use eframe::egui::{vec2, Color32, Sense, Stroke, Ui};
 
 use super::app::ClevoLedApp;
+use super::theme;
 use crate::model::{Mode, Rgb};
 
 pub(super) fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
@@ -24,12 +25,12 @@ pub(super) fn color_swatch(ui: &mut Ui, app: &mut ClevoLedApp) {
         painter.circle_stroke(
             center,
             radius + 6.0,
-            Stroke::new(1.5, Color32::from_rgb(214, 157, 92)),
+            Stroke::new(1.5, theme::palette(app.theme_color).accent),
         );
     }
 
     if response.clicked() && matches!(app.mode, Mode::Custom | Mode::Breathing) {
-        match open_native_color_picker(app.f0_color) {
+        match open_native_color_picker(app.f0_color, app.language) {
             Ok(Some(rgb)) => {
                 app.f0_color = rgb;
                 app.mark_settings_dirty();
@@ -48,7 +49,10 @@ fn rgb_color32(rgb: Rgb) -> Color32 {
     Color32::from_rgb(rgb.r, rgb.g, rgb.b)
 }
 
-fn open_native_color_picker(current: Rgb) -> io::Result<Option<Rgb>> {
+fn open_native_color_picker(
+    current: Rgb,
+    language: crate::preferences::UiLanguage,
+) -> io::Result<Option<Rgb>> {
     let current_hex = format!("#{:02x}{:02x}{:02x}", current.r, current.g, current.b);
 
     if command_exists("zenity") {
@@ -82,7 +86,10 @@ fn open_native_color_picker(current: Rgb) -> io::Result<Option<Rgb>> {
 
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "需要安装 zenity 或 kdialog 才能弹出系统调色盘",
+        language.pick(
+            "需要安装 zenity 或 kdialog 才能弹出系统调色盘",
+            "Install zenity or kdialog to open the system color picker",
+        ),
     ))
 }
 
