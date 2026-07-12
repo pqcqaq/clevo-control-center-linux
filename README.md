@@ -66,7 +66,9 @@ cd clevo-control-center-linux
 - `make` 和当前运行内核对应的 headers，路径必须存在：`/lib/modules/$(uname -r)/build`；
 - `pkexec`，供 GUI 在模块缺失或 API 过旧时请求桌面权限；
 - `zenity` 或 `kdialog`，供模块处理提示和系统调色盘使用；
-- 构建 `.deb` 时额外需要 `dpkg-deb`；
+- 构建 `.deb` 时额外需要 `dpkg-deb`，构建 `.rpm` 时需要 `rpmbuild`；
+- 完整 Release 需要 Docker，以 Debian Bullseye（glibc 2.31）基线构建跨发行版二进制；
+- Arch 包需要 `makepkg`，缺少时脚本可通过 Docker 的 `archlinux:base-devel` 镜像构建；
 - 生成正式 Release 时额外需要 `rustfmt`、`clippy`、`git` 和 `sha256sum`。
 
 检查当前环境：
@@ -159,6 +161,24 @@ sudo apt install ./dist/clevo-control-center_0.1.0_amd64.deb
 
 `postinst` 只在 `make` 和当前内核 headers 都存在时尝试编译、安装并加载模块；缺失依赖时包仍会安装，但硬件功能不可用，需补齐 headers 后重新安装或手动构建模块。
 
+### Fedora/RHEL 9+/openSUSE `.rpm`
+
+```bash
+scripts/package-rpm.sh
+sudo dnf install ./dist/clevo-control-center-0.1.0-1.x86_64.rpm
+```
+
+openSUSE 可以使用 `sudo zypper install ./dist/clevo-control-center-0.1.0-1.x86_64.rpm`。RPM 安装脚本会在目标系统存在当前内核 build 目录时编译模块；Fedora/RHEL 系通常需要安装与当前内核匹配的 `kernel-devel`。当前 Release 的 glibc 基线不覆盖 glibc 2.28 的 RHEL/Rocky/Alma 8，只支持 9 及更新版本。
+
+### Arch Linux/Manjaro `.pkg.tar.zst`
+
+```bash
+scripts/package-arch.sh
+sudo pacman -U ./dist/clevo-control-center-0.1.0-1-x86_64.pkg.tar.zst
+```
+
+脚本优先调用本机 `makepkg`；非 Arch 构建机可用 Docker 自动进入官方 `archlinux:base-devel` 镜像。目标机器仍需安装当前内核对应的 headers，例如 `linux-headers` 或 `linux-lts-headers`。
+
 ### 正式 Release 产物
 
 在干净且已经提交的 Git 工作区运行：
@@ -167,16 +187,27 @@ sudo apt install ./dist/clevo-control-center_0.1.0_amd64.deb
 scripts/package-release.sh
 ```
 
+如果当前 Linux 打包机没有 `rustfmt`/`clippy`，但同一提交已经在其他环境通过完整门禁，可以显式只构建产物：
+
+```bash
+scripts/package-release.sh --skip-checks
+```
+
+`--skip-checks` 不放宽 Git 要求：所有会进入公开仓库和源码包的文件仍必须已提交；本地被 `.gitignore` 排除的协作记录不会阻止打包。发布前应保留一份完整门禁结果。
+
 该脚本会依次运行 Rust 格式、check、严格 Clippy、测试、内核模块 `W=1` 构建，然后生成：
 
 ```text
 dist/clevo-control-center-<version>-source.tar.gz
 dist/clevo-control-center-<version>-linux-<arch>.tar.gz
 dist/clevo-control-center_<version>_<deb-arch>.deb   # 安装了 dpkg-deb 时
+dist/clevo-control-center-<version>-1.<rpm-arch>.rpm # 安装了 rpmbuild 时
+dist/clevo-control-center-<version>-1-<arch>.pkg.tar.zst
+dist/RELEASE_ASSETS.txt
 dist/SHA256SUMS
 ```
 
-源代码包通过 `git archive HEAD` 创建，因此脚本拒绝脏工作区，避免源码、二进制和版本元数据不一致。通用包和 Debian 包都会携带 README、贡献指南、安全策略和 GPL-2.0-only 许可证。
+源代码包通过 `git archive HEAD` 创建，因此脚本拒绝脏工作区，避免源码、二进制和版本元数据不一致。Release 二进制在 Docker 的 Debian Bullseye 中构建，兼容基线为 glibc 2.31；通用、Debian、RPM 和 Arch 包复用同一二进制，都会携带模块源码、README、贡献指南、安全策略和 GPL-2.0-only 许可证，不会携带构建机生成的 `.ko`。
 
 ## 模块加载与版本
 

@@ -40,6 +40,14 @@ Linux 内核模块门禁：
 make -B -C module W=1
 ```
 
+构建完整 Release 资产：
+
+```bash
+scripts/package-release.sh
+```
+
+该命令要求干净 Git 工作区和 Docker。二进制在 Debian Bullseye/glibc 2.31 基线中构建，并按打包机现有工具生成 source、tar.gz、deb、rpm、Arch 包、资产说明和 SHA-256 校验文件。`--skip-checks` 只用于同一提交已经在其他环境完成完整门禁的打包机。
+
 内核模块必须在目标 Linux 内核的 headers/Kbuild 环境中检查。Windows 编辑器无法解析 `linux/*.h` 不代表模块源码存在语法错误。
 
 ## 代码边界

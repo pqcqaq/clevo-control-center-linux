@@ -27,6 +27,26 @@ else
     printf '[warn] dpkg-deb not found; .deb packaging will be unavailable\n'
 fi
 
+if command -v rpmbuild >/dev/null 2>&1; then
+    printf '[ok] rpmbuild: %s\n' "$(command -v rpmbuild)"
+else
+    printf '[warn] rpmbuild not found; .rpm packaging will be unavailable\n'
+fi
+
+if command -v makepkg >/dev/null 2>&1; then
+    printf '[ok] makepkg: %s\n' "$(command -v makepkg)"
+elif command -v docker >/dev/null 2>&1; then
+    printf '[ok] Arch package builder: Docker at %s\n' "$(command -v docker)"
+else
+    printf '[warn] makepkg and Docker not found; Arch packaging will be unavailable\n'
+fi
+
+if command -v docker >/dev/null 2>&1; then
+    printf '[ok] portable release builder: Docker at %s\n' "$(command -v docker)"
+else
+    printf '[warn] Docker not found; the glibc 2.31 portable release binary cannot be built\n'
+fi
+
 if command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1; then
     printf '[ok] color picker: '
     command -v zenity 2>/dev/null || command -v kdialog

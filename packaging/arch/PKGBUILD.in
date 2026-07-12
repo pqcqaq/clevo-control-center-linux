@@ -1,0 +1,58 @@
+pkgname=clevo-control-center
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Clevo/BlueSky control center for Linux'
+arch=('@ARCH@')
+url='https://github.com/pqcqaq/clevo-control-center-linux'
+license=('GPL-2.0-only')
+depends=('glibc' 'bash')
+optdepends=(
+    'polkit: graphical authorization for kernel module updates'
+    'zenity: module dialogs and system color picker'
+    'kdialog: KDE alternative to zenity'
+    'linux-headers: build the module for the standard Arch kernel'
+    'linux-lts-headers: build the module for the Arch LTS kernel'
+)
+provides=('clevo-keyboard-led')
+conflicts=('clevo-keyboard-led')
+install=clevo-control-center.install
+options=('!strip')
+source=(
+    'clevo-control-center'
+    'clevo-control-center.desktop'
+    'module.Makefile'
+    'clevo_control_center.c'
+    'README.md'
+    'DCHU_ADJUSTMENTS.md'
+    'CONTRIBUTING.md'
+    'SECURITY.md'
+    'LICENSE'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+    install -Dm755 "$srcdir/clevo-control-center" \
+        "$pkgdir/usr/lib/clevo-control-center/clevo-control-center"
+
+    install -d "$pkgdir/usr/bin"
+    cat > "$pkgdir/usr/bin/clevo-control-center" <<'EOF'
+#!/usr/bin/env bash
+cd /usr/lib/clevo-control-center
+exec /usr/lib/clevo-control-center/clevo-control-center "$@"
+EOF
+    chmod 0755 "$pkgdir/usr/bin/clevo-control-center"
+
+    install -Dm644 "$srcdir/clevo-control-center.desktop" \
+        "$pkgdir/usr/share/applications/clevo-control-center.desktop"
+    install -Dm644 "$srcdir/module.Makefile" \
+        "$pkgdir/usr/lib/clevo-control-center/module/Makefile"
+    install -Dm644 "$srcdir/clevo_control_center.c" \
+        "$pkgdir/usr/lib/clevo-control-center/module/clevo_control_center.c"
+
+    local doc_dir="$pkgdir/usr/share/doc/clevo-control-center"
+    install -Dm644 "$srcdir/README.md" "$doc_dir/README.md"
+    install -Dm644 "$srcdir/DCHU_ADJUSTMENTS.md" "$doc_dir/DCHU_ADJUSTMENTS.md"
+    install -Dm644 "$srcdir/CONTRIBUTING.md" "$doc_dir/CONTRIBUTING.md"
+    install -Dm644 "$srcdir/SECURITY.md" "$doc_dir/SECURITY.md"
+    install -Dm644 "$srcdir/LICENSE" "$doc_dir/LICENSE"
+}

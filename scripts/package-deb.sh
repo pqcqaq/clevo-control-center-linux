@@ -9,13 +9,20 @@ VERSION="$(grep -m1 '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/'
 DEB_ARCH="${DEB_ARCH:-amd64}"
 BUILD_DIR="$ROOT_DIR/dist/deb/$APP_ID"
 OUTPUT="$ROOT_DIR/dist/${APP_ID}_${VERSION}_${DEB_ARCH}.deb"
+BINARY="${RELEASE_BINARY:-target/release/$APP_ID}"
 
 if ! command -v dpkg-deb >/dev/null 2>&1; then
     echo "dpkg-deb not found" >&2
     exit 1
 fi
 
-cargo build --release
+if [[ -z "${RELEASE_BINARY:-}" ]]; then
+    cargo build --release
+fi
+if [[ ! -x "$BINARY" ]]; then
+    echo "release binary not found or not executable: $BINARY" >&2
+    exit 1
+fi
 
 rm -rf "$BUILD_DIR"
 mkdir -p \
@@ -25,7 +32,7 @@ mkdir -p \
     "$BUILD_DIR/usr/share/applications" \
     "$BUILD_DIR/usr/share/doc/$APP_ID"
 
-install -m 0755 "target/release/$APP_ID" "$BUILD_DIR/usr/lib/$APP_ID/$APP_ID"
+install -m 0755 "$BINARY" "$BUILD_DIR/usr/lib/$APP_ID/$APP_ID"
 install -m 0644 module/Makefile "$BUILD_DIR/usr/lib/$APP_ID/module/Makefile"
 install -m 0644 module/clevo_control_center.c "$BUILD_DIR/usr/lib/$APP_ID/module/clevo_control_center.c"
 

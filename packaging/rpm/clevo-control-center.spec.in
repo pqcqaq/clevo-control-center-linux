@@ -1,0 +1,85 @@
+Name:           clevo-control-center
+Version:        @VERSION@
+Release:        1%{?dist}
+%global __strip /bin/true
+Summary:        Clevo/BlueSky control center for Linux
+License:        GPL-2.0-only
+URL:            https://github.com/pqcqaq/clevo-control-center-linux
+Source0:        payload.tar.gz
+BuildArch:      @ARCH@
+
+Requires:       /bin/bash
+Requires:       glibc
+Recommends:     make
+Recommends:     polkit
+Recommends:     zenity
+Recommends:     kmod
+Suggests:       kernel-devel
+Provides:       clevo-keyboard-led
+Obsoletes:      clevo-keyboard-led < %{version}-%{release}
+
+%description
+Rust GUI, background lighting service, and restricted DCHU control CLI for
+compatible Clevo-family laptops. The package carries kernel module source and
+builds it for the running kernel when matching headers are available.
+
+%prep
+mkdir -p payload
+tar -xzf %{SOURCE0} -C payload
+
+%build
+
+%install
+mkdir -p %{buildroot}
+cp -a payload/. %{buildroot}/
+
+%post
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+
+module_dir=/usr/lib/clevo-control-center/module
+kernel_build=/lib/modules/$(uname -r)/build
+if command -v make >/dev/null 2>&1 && [ -d "$kernel_build" ]; then
+    make -C "$module_dir" >/dev/null 2>&1 || true
+    if [ -f "$module_dir/clevo_control_center.ko" ]; then
+        install -d "/lib/modules/$(uname -r)/extra"
+        modprobe -r clevo_kbd_led >/dev/null 2>&1 || true
+        modprobe -r clevo_control_center >/dev/null 2>&1 || true
+        install -m 0644 "$module_dir/clevo_control_center.ko" \
+            "/lib/modules/$(uname -r)/extra/clevo_control_center.ko" || true
+        rm -f "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
+        depmod -a >/dev/null 2>&1 || true
+        modprobe clevo_control_center >/dev/null 2>&1 || true
+    fi
+fi
+
+%preun
+if [ "$1" -eq 0 ]; then
+    modprobe -r clevo_control_center >/dev/null 2>&1 || true
+    modprobe -r clevo_kbd_led >/dev/null 2>&1 || true
+    rm -f "/lib/modules/$(uname -r)/extra/clevo_control_center.ko" \
+        "/lib/modules/$(uname -r)/extra/clevo_kbd_led.ko"
+    depmod -a >/dev/null 2>&1 || true
+fi
+
+%postun
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+
+%files
+%license /usr/share/doc/clevo-control-center/LICENSE
+%doc /usr/share/doc/clevo-control-center/README.md
+%doc /usr/share/doc/clevo-control-center/DCHU_ADJUSTMENTS.md
+%doc /usr/share/doc/clevo-control-center/CONTRIBUTING.md
+%doc /usr/share/doc/clevo-control-center/SECURITY.md
+/usr/bin/clevo-control-center
+/usr/lib/clevo-control-center/clevo-control-center
+/usr/lib/clevo-control-center/module/Makefile
+/usr/lib/clevo-control-center/module/clevo_control_center.c
+/usr/share/applications/clevo-control-center.desktop
+
+%changelog
+* Sun Jul 12 2026 Clevo Control Center Contributors <qcqcqc@zust.online> - @VERSION@-1
+- Initial public package

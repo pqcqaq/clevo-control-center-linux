@@ -9,13 +9,20 @@ VERSION="$(grep -m1 '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/'
 ARCH="$(uname -m)"
 STAGE="$ROOT_DIR/dist/$APP_ID-$VERSION-linux-$ARCH"
 ARCHIVE="$ROOT_DIR/dist/$APP_ID-$VERSION-linux-$ARCH.tar.gz"
+BINARY="${RELEASE_BINARY:-target/release/$APP_ID}"
 
-cargo build --release
+if [[ -z "${RELEASE_BINARY:-}" ]]; then
+    cargo build --release
+fi
+if [[ ! -x "$BINARY" ]]; then
+    echo "release binary not found or not executable: $BINARY" >&2
+    exit 1
+fi
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/app" "$STAGE/packaging" "$STAGE/module"
 
-install -m 0755 "target/release/$APP_ID" "$STAGE/bin/$APP_ID"
+install -m 0755 "$BINARY" "$STAGE/bin/$APP_ID"
 install -m 0644 "app/$APP_ID.desktop" "$STAGE/app/$APP_ID.desktop"
 install -m 0755 "packaging/install.sh" "$STAGE/install.sh"
 install -m 0644 README.md "$STAGE/README.md"
