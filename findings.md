@@ -1,5 +1,43 @@
 # 发现与决策
 
+## 自定义风扇曲线逆向复核（2026-07-12）
+
+- 原厂 `FnKey.Device.FAN.SetCustomFanTable()` 构造完整 256 字节 buffer，只有 offset `2..31` 有效：CPU/GPU1/GPU2 的 T2/D2/T3/D3 位于 `2..13`，三段 R 值按 big-endian 位于 `14..31`，offset `0/1` 为零；随后只调用 `SetWMIPackage(14, array)`。
+- 当前内核 `fan_curve_payload_channel()` 的点位、三通道布局、duty 百分比到 0..255 的换算、斜率公式及 big-endian 顺序与原厂逐字节一致；GPU 曲线复制到 GPU1/GPU2 也符合当前只有一条 GPU UI 曲线的设计。没有发现 0x0E 包头缺失。
+- 当前内核写包成功后额外调用原厂风扇模式命令 `SetWMI(121, 1, 6)` 并把受限 AppSettings `4:5` 设为 custom；原厂在 `KeepFanMode()` 中同样用 mode 6 保持 custom。写入与模式切换的基本顺序没有明显错误。
+- 用户确认产品设计就是“风扇页本地保存，首页选择曲线时才真正写 EC”；因此保存动作不直接写硬件不是 bug。真正需要修复的是写入时的曲线语义和 active 状态一致性。
+- 原厂只把中间点 T2/D2、T3/D3 写进 0x0E，T1/D1 从 WMI13 读取且不可编辑，T4/D4 强制为 `100°C/100%`。当前 Linux UI 允许四点全部编辑，并用用户提供的第 1、4 点计算 R12/R34，导致图形和 EC 实际锚点不一致。
+- 远端当前 WMI13：CPU 固定 T1/D1=`40°C/32%`，GPU 固定 T1/D1=`40°C/32%`；CPU T2/D2=`52°C/100%`、T3/D3=`78°C/100%` 已与本地曲线 1 中间点一致，证明 0x0E 表曾成功写入。
+- 本地曲线 1 CPU 第一点被改为 `30°C/100%`，当前内核据此算出 R12=0；按真实固件锚点 `40°C/32% -> 52°C/100%` 应算出 R12≈231。当前 CPU 约 44°C 时，UI 曲线宣称 100%，EC 却会从固定 32% 锚点按错误零斜率运行，直接解释“看起来没有效果”。
+- GPU 曲线同样错误：本地端点 `42°C/25% -> 60°C/44%` 算得 R12≈43，而固件真实端点 `40°C/32% -> 60°C/44%` 应约为 24；末段本地以 `96°C/100%` 计算，固件实际终点是 `100°C/100%`。
+- 已解包真正的原厂 `FanSpeedSetting.appxbundle`。其可执行文件只包含 `T2_MouseLeftButtonDown/Up`、`T3_MouseLeftButtonDown/Up` 和 `T2_move/T3_move` 交互方法，没有 T1/T4 拖动处理；同时存在 `Update_T1_UI..Update_T4_UI`。这从 UI 层交叉确认 T1/T4 只显示、T2/T3 才可编辑。
+- 原厂 UWP 明确包含 `Read_WMI13`、`Write_WMI14`、`Load_Rxx`、`Save_FanTable`、`BTN_SAVE_Fan_Click`、`SetFanMode`，与 FnKey 后台类的“读取固件端点 -> 编辑中间点 -> 重算斜率 -> 写 WMI14 -> 切 custom”链路一致。
+
+## 键盘区域能力与软件动态灯效（2026-07-12）
+
+- `FnKey/BaseKB.GetKBType()` 直接返回 WMI13 (`0x0D`) buffer 的 `offset 15`；仅把 `3/19/35/51/243` 归一为 `3`（逐键键盘家族）。没有发现独立的 zone-count 字段。
+- 原厂 `KBModule` 对 `typeRule 2/6/22` 都使用 `RGBKB`，但 `LeftStatus/MidStatus/RightStatus` 属性只在 `typeRule == 2` 时读写；`6/22` 不暴露三个独立区域状态。
+- `typeRule 6/22` 初始化 `Init_RGB15Color_Table()`，Fn 热键切色修改 `RGBKB.All` 并调用 `SetAllColor()`；这说明该家族的用户语义是整键盘单区、有限色表，而不是三区能力。
+- `RGBKB.SetAllColor()` 的通用实现会把同一个颜色分别写到 F0/F1/F2；协议没有单独的 F5/All 写颜色命令。但实测三写无法满足 16ms 帧预算，而 `KBTP=6` 是一个物理单区，软件帧应只写主区域 F0；静态/动态实机部署后再确认整块键盘行为。
+- `typeRule 2` 才是三个独立基础区域；`typeRule 3` 是逐键；`typeRule 1` 是白光；`0` 不支持。Logo 与 Lightbar 分别由 `GetWMI(122)` 的 `0x40000` 和 `0x1000` 能力位控制，不应从 KBTP 猜测。
+- 当前后台服务 `SERVICE_POLL_INTERVAL=250ms`，动态模式只下发一次 EC 原生 effect，未实现用户要求的每 16ms 软件帧循环。
+- 远端实测当前内核接口用同色简写同步 F0/F1/F2 共 180 帧：mean 18.028ms、p50 15.482ms、p95 19.733ms、max 110.175ms，平均只能约 55.5 FPS，无法稳定满足 16ms 帧预算。
+- 远端只写 F0 共 240 帧：mean 6.068ms、p50 5.143ms、p95 8.274ms、max 34.778ms，平均吞吐约 164.8 FPS。若 `KBTP=6` 单区硬件确实由主寄存器 F0 驱动，服务可稳定按 16ms deadline 调度；偶发超时由 deadline 跳帧而不是累积漂移。
+- 最终服务使用 15ms deadline 为 ACPI 偶发慢写留余量，硬件快照采集与缓存写盘在独立工作线程执行。远端 10 秒黑盒计数：静态基线 0.500 writes/s、动态 63.998 writes/s，扣除基线后软件灯光帧率 63.498 FPS。
+- 最终实窗确认 `KBTP=6` 页面显示“单区 RGB”“整个键盘”，设置页不再出现 `f0-f6`；服务与 GUI 运行二进制哈希均为 `0a80d5b...e279f`，模块 API 保持 5（本轮未改变内核接口）。
+
+## 2026-07-12 语言与主题设置
+
+- `Settings` 会被 GUI 与后台服务共同反序列化，因此语言和主题字段必须使用 `serde(default)`，保证旧配置无迁移中断；后台服务只忽略这两个纯 UI 字段。
+- 系统语言以 Linux 桌面常见优先级 `LANGUAGE -> LC_ALL -> LC_MESSAGES -> LANG` 解析；所有 `zh*` locale 使用简体中文界面，其余回退英语。显式语言选择覆盖系统检测。
+- 翻译文本保留在所属页面或领域标签附近，由统一 `UiLanguage::pick(zh, en)` 选择，避免形成与页面内容脱节的巨型字符串表；系统检测和偏好枚举集中在有业务语义的 `preferences` 模块。
+- 主题只替换产品交互强调色：导航、开关、选择态、滑块和通用按钮。电池健康绿、GPU 模式青/橙、错误红、免责声明琥珀均保留语义色，避免个性主题破坏状态辨识。
+- 设置页新增内容后已形成独立职责，适合从 `pages.rs` 迁入 `pages/settings.rs`；诊断与高级分发继续留在原模块。
+- 实现验证确认语言偏好和主题色可以作为纯 UI 字段加入共享 `Settings`，不会改变后台服务的灯光配置比较或硬件写入路径。
+- 主题应用在每帧绘制前刷新 egui visuals；设置页点击后下一次 repaint 即生效，同时自绘导航、总览和风扇控件直接读取同一调色板，不会出现只改标准控件的半套主题。
+- 960×600 实窗表明英文总览不能复用中文 88px 动作按钮预算；英文使用 112px，并把 section code 起点从 88px 后移到 120px，中文尺寸保持不变。
+- 远端 Cargo 必须从仓库目录执行才能加载项目 `.cargo/config.toml` 的 rsproxy source；只有 `--manifest-path` 不会改变配置发现的起始目录。
+
 ## 2026-07-11 首次启动安全边界
 
 - 首次运行必须在旧配置迁移完成后判断；否则已有 `~/.config/clevo-keyboard-led/settings.json` 的升级用户会被误判为首次启动。
@@ -570,6 +608,7 @@
 - 写 `fan-curve` 时，用户态和内核态都只接受固定 4 点 CPU/GPU 曲线；内核模块按原厂公式生成 `SetWMIPackage(14)` buffer，写入成功后再调用 `fan-mode custom`，因此 GUI 总览选择 `曲线 1/2/3` 才会真正应用到 EC。
 - GUI 按钮高亮只读 `app_power_mode/app_fan_mode`，不再使用 `mode_status` 推导。
 - GUI 的“风扇”页面编辑三组本地 CPU/GPU 曲线并保存到 app 配置；首页显示的 `曲线 1/2/3` 负责把对应曲线写入 EC。Linux 当前仍不写完整 AppSettings 风扇表持久镜像，只同步 `4:5=custom` 的受限模式读回。
+- 代码调用链与上述设计一致：`save_fan_curve_draft()` 只更新内存配置并经 `persist_settings()` 写入 `settings.json`；`HardwareBackend::set_fan_curve()` 只由首页的 `select_fan_curve_profile()` 调用（另有用户显式执行的 DCHU CLI）。因此“编辑页保存本地，首页选择时应用硬件”不是当前无效果问题的根因。
 - GUI 的“电池”页面可以编辑本地电池策略、充电阈值和低电量策略意图；当前不调用 Battery Saver/EnergySave 写接口，不写 EC，也不切换系统电源计划。
 
 ### 仍未完全确认的点
