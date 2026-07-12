@@ -26,9 +26,8 @@ mkdir -p \
     "$BUILD_DIR/usr/share/doc/$APP_ID"
 
 install -m 0755 "target/release/$APP_ID" "$BUILD_DIR/usr/lib/$APP_ID/$APP_ID"
-cp -R module/. "$BUILD_DIR/usr/lib/$APP_ID/module/"
-find "$BUILD_DIR/usr/lib/$APP_ID/module" -type f \( -name '*.ko' -o -name '*.o' -o -name '*.mod' -o -name '*.mod.c' -o -name 'Module.symvers' -o -name 'modules.order' -o -name '.*.cmd' \) -delete
-rm -rf "$BUILD_DIR/usr/lib/$APP_ID/module/.tmp_versions"
+install -m 0644 module/Makefile "$BUILD_DIR/usr/lib/$APP_ID/module/Makefile"
+install -m 0644 module/clevo_control_center.c "$BUILD_DIR/usr/lib/$APP_ID/module/clevo_control_center.c"
 
 cat > "$BUILD_DIR/usr/bin/$APP_ID" <<EOF
 #!/usr/bin/env bash
@@ -40,6 +39,10 @@ chmod 0755 "$BUILD_DIR/usr/bin/$APP_ID"
 sed "s#^Exec=.*#Exec=/usr/bin/$APP_ID#" "app/$APP_ID.desktop" > "$BUILD_DIR/usr/share/applications/$APP_ID.desktop"
 chmod 0644 "$BUILD_DIR/usr/share/applications/$APP_ID.desktop"
 install -m 0644 README.md "$BUILD_DIR/usr/share/doc/$APP_ID/README.md"
+install -m 0644 DCHU_ADJUSTMENTS.md "$BUILD_DIR/usr/share/doc/$APP_ID/DCHU_ADJUSTMENTS.md"
+install -m 0644 CONTRIBUTING.md "$BUILD_DIR/usr/share/doc/$APP_ID/CONTRIBUTING.md"
+install -m 0644 SECURITY.md "$BUILD_DIR/usr/share/doc/$APP_ID/SECURITY.md"
+install -m 0644 LICENSE "$BUILD_DIR/usr/share/doc/$APP_ID/copyright"
 install -m 0644 packaging/deb/control "$BUILD_DIR/DEBIAN/control"
 sed -i "s/^Version: .*/Version: $VERSION/" "$BUILD_DIR/DEBIAN/control"
 sed -i "s/^Architecture: .*/Architecture: $DEB_ARCH/" "$BUILD_DIR/DEBIAN/control"

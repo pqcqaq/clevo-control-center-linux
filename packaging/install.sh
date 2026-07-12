@@ -6,6 +6,7 @@ PREFIX="${PREFIX:-$HOME/.local}"
 LIB_DIR="${LIB_DIR:-$PREFIX/lib/$APP_ID}"
 BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
 DESKTOP_DIR="${DESKTOP_DIR:-$PREFIX/share/applications}"
+DOC_DIR="${DOC_DIR:-$PREFIX/share/doc/$APP_ID}"
 MODE="${1:-install}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +17,7 @@ else
 fi
 
 install_app() {
-    mkdir -p "$LIB_DIR" "$BIN_DIR" "$DESKTOP_DIR"
+    mkdir -p "$LIB_DIR" "$BIN_DIR" "$DESKTOP_DIR" "$DOC_DIR"
     install -m 0755 "$ROOT_DIR/bin/$APP_ID" "$LIB_DIR/$APP_ID"
     rm -rf "$LIB_DIR/module"
     cp -R "$ROOT_DIR/module" "$LIB_DIR/module"
@@ -31,6 +32,11 @@ EOF
     rm -f "$BIN_DIR/clevo-keyboard-led" "$DESKTOP_DIR/clevo-keyboard-led.desktop"
     sed "s#^Exec=.*#Exec=$BIN_DIR/$APP_ID#" "$ROOT_DIR/app/$APP_ID.desktop" > "$DESKTOP_DIR/$APP_ID.desktop"
     chmod 0644 "$DESKTOP_DIR/$APP_ID.desktop"
+    install -m 0644 "$ROOT_DIR/README.md" "$DOC_DIR/README.md"
+    install -m 0644 "$ROOT_DIR/DCHU_ADJUSTMENTS.md" "$DOC_DIR/DCHU_ADJUSTMENTS.md"
+    install -m 0644 "$ROOT_DIR/CONTRIBUTING.md" "$DOC_DIR/CONTRIBUTING.md"
+    install -m 0644 "$ROOT_DIR/SECURITY.md" "$DOC_DIR/SECURITY.md"
+    install -m 0644 "$ROOT_DIR/LICENSE" "$DOC_DIR/LICENSE"
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
     fi
@@ -75,7 +81,7 @@ install_module() {
 
 uninstall_app() {
     rm -f "$BIN_DIR/$APP_ID" "$BIN_DIR/clevo-keyboard-led" "$DESKTOP_DIR/$APP_ID.desktop" "$DESKTOP_DIR/clevo-keyboard-led.desktop"
-    rm -rf "$LIB_DIR"
+    rm -rf "$LIB_DIR" "$DOC_DIR"
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
     fi

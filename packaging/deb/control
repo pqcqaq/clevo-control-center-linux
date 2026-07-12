@@ -3,13 +3,14 @@ Version: 0.1.0
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: Clevo Control Center Maintainers <root@localhost>
+Maintainer: Clevo Control Center Contributors <qcqcqc@zust.online>
 Depends: libc6, zenity | kdialog
 Recommends: pkexec, make, linux-headers-amd64
+Homepage: https://github.com/pqcqaq/clevo-control-center-linux
 Provides: clevo-keyboard-led
 Conflicts: clevo-keyboard-led
 Replaces: clevo-keyboard-led
 Description: Clevo/BlueSky control center for Linux
- Rust GUI, background service, and diagnostic CLI for Clevo/BlueSky laptops.
- The package includes the kernel module source and tries to build it for
- the running kernel during installation when headers are available.
+ Rust GUI, background lighting service, and restricted DCHU control CLI for
+ compatible Clevo-family laptops. The package includes the kernel module
+ source and tries to build it for the running kernel when headers are present.
