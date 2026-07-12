@@ -254,7 +254,13 @@ fn overview_fan_mode_items(app: &ClevoLedApp) -> Vec<(&'static str, &'static str
 }
 
 fn selected_fan_mode_value(app: &ClevoLedApp) -> Option<&'static str> {
-    if app.fan_curves.enabled {
+    let hardware_custom = app
+        .hardware
+        .as_ref()
+        .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        .and_then(|config| config.app_fan_mode)
+        == Some(6);
+    if app.fan_curves.enabled && hardware_custom {
         if let Some(index) = app.fan_curves.selected_profile {
             return Some(FanCurveSettings::mode_value(index));
         }

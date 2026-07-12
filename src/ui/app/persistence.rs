@@ -24,6 +24,7 @@ impl ClevoLedApp {
 
         if let Some(snapshot) = load_hardware_snapshot(&self.hardware_snapshot_path) {
             self.hardware = Some(snapshot);
+            self.sync_fan_curve_firmware_anchors();
             self.hardware_status = None;
             self.hardware_snapshot_mtime = mtime;
         }
@@ -45,6 +46,7 @@ impl ClevoLedApp {
         self.language_preference = settings.language;
         self.language = settings.language.resolved();
         self.theme_color = settings.theme_color;
+        self.sync_fan_curve_firmware_anchors();
     }
 
     pub(super) fn sync_external_settings(&mut self) {

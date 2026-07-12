@@ -198,6 +198,34 @@ fn raw_keyboard_type_takes_precedence_over_compatibility_field() {
 }
 
 #[test]
+fn fan_curve_anchors_use_wmi13_first_points_and_oem_duty_conversion() {
+    let mut raw_config = vec![0; 34];
+    raw_config[16] = 40;
+    raw_config[17] = 82;
+    raw_config[24] = 42;
+    raw_config[25] = 64;
+    let config = DchuConfig {
+        raw_config,
+        ..DchuConfig::default()
+    };
+
+    assert_eq!(
+        config.cpu_fan_curve_anchor(),
+        Some(crate::fan_curve::FanCurvePoint {
+            temp_celsius: 40,
+            duty_percent: 32,
+        })
+    );
+    assert_eq!(
+        config.gpu_fan_curve_anchor(),
+        Some(crate::fan_curve::FanCurvePoint {
+            temp_celsius: 42,
+            duty_percent: 25,
+        })
+    );
+}
+
+#[test]
 fn gpu_mux_modes_keep_write_targets_available() {
     let snapshot = HardwareSnapshot {
         fans: Vec::new(),

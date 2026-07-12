@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(debug_assertions, test))]
 use std::fmt::Write as _;
 
+use crate::fan_curve::{FanCurvePoint, FAN_CURVE_MAX_TEMP};
 use crate::preferences::UiLanguage;
 
 pub use cli::{print_dchu_usage, run_dchu_cli};
@@ -240,6 +241,14 @@ impl DchuConfig {
         }
     }
 
+    pub fn cpu_fan_curve_anchor(&self) -> Option<FanCurvePoint> {
+        fan_curve_anchor(&self.raw_config, 16)
+    }
+
+    pub fn gpu_fan_curve_anchor(&self) -> Option<FanCurvePoint> {
+        fan_curve_anchor(&self.raw_config, 24)
+    }
+
     #[cfg(any(debug_assertions, test))]
     pub fn fan_count(&self) -> Option<u8> {
         self.raw_config.get(0x0c).copied().or(self.fanq)
@@ -347,6 +356,18 @@ impl DchuConfig {
             .get(0x2b)
             .map(|value| ((value >> 1) & 1) == 1)
     }
+}
+
+fn fan_curve_anchor(buffer: &[u8], offset: usize) -> Option<FanCurvePoint> {
+    let temp_celsius = *buffer.get(offset)?;
+    let duty_raw = *buffer.get(offset + 1)?;
+    if temp_celsius >= FAN_CURVE_MAX_TEMP - 2 {
+        return None;
+    }
+    Some(FanCurvePoint {
+        temp_celsius,
+        duty_percent: ((u16::from(duty_raw) * 100 + 127) / 255) as u8,
+    })
 }
 
 fn capability_bit(value: Option<u32>, bit: u32) -> Option<bool> {

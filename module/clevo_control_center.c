@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Clevo/BlueSky Control Center ACPI bridge.
  *
@@ -25,8 +25,8 @@
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_APP_SETTINGS_PROC_NAME "clevo_dchu_app_settings"
 #define MODULE_VERSION_PROC_NAME "clevo_control_center_version"
-#define CLEVO_MODULE_API_VERSION 5
-#define CLEVO_MODULE_API_VERSION_STRING "5"
+#define CLEVO_MODULE_API_VERSION 8
+#define CLEVO_MODULE_API_VERSION_STRING "8"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
 #define DCHU_BUFFER_SIZE 0x100
@@ -541,6 +541,9 @@ static int clevo_dchu_set_power_mode(const char *value)
 		dchu_app_settings[DCHU_APP_POWER_MODE_OFFSET] = old_mode;
 		dchu_app_power_mode_valid = old_valid;
 		mutex_unlock(&dchu_app_settings_lock);
+	} else {
+		/* Clevo power profiles return fan control to the automatic table. */
+		clevo_dchu_app_write_byte(4, 5, 0);
 	}
 	return ret;
 }
@@ -548,6 +551,11 @@ static int clevo_dchu_set_power_mode(const char *value)
 static u8 fan_curve_duty_raw(u8 duty)
 {
 	return DIV_ROUND_CLOSEST((u32)duty * 255u, 100u);
+}
+
+static u8 fan_curve_duty_percent(u8 duty)
+{
+	return DIV_ROUND_CLOSEST((u32)duty * 100u, 255u);
 }
 
 static u16 fan_curve_slope(const struct fan_curve_point *from,
@@ -614,29 +622,92 @@ static void fan_curve_payload_channel(u8 *payload, int channel,
 	payload[slope_base + 5] = (u8)slope;
 }
 
+static int fan_curve_load_firmware_anchors(struct fan_curve_point *cpu,
+					   struct fan_curve_point *gpu1,
+					   struct fan_curve_point *gpu2)
+{
+	u8 config[DCHU_BUFFER_SIZE] = { 0 };
+	size_t config_len = 0;
+	int ret;
+
+	ret = clevo_dchu_eval_buffer(0x0d, NULL, 0, config, sizeof(config),
+				     &config_len);
+	if (ret)
+		return ret;
+	if (config_len <= 33)
+		return -EIO;
+
+	cpu[0].temp = config[16];
+	cpu[0].duty = fan_curve_duty_percent(config[17]);
+	gpu1[0].temp = config[24];
+	gpu1[0].duty = fan_curve_duty_percent(config[25]);
+	gpu2[0].temp = config[32];
+	gpu2[0].duty = fan_curve_duty_percent(config[33]);
+
+	cpu[3].temp = FAN_CURVE_MAX_TEMP;
+	cpu[3].duty = FAN_CURVE_MAX_DUTY;
+	gpu1[3] = cpu[3];
+	gpu2[3] = cpu[3];
+	return 0;
+}
+
+static bool fan_curve_channel_valid(const struct fan_curve_point *points)
+{
+	int index;
+
+	for (index = 1; index < FAN_CURVE_POINTS; index++) {
+		if (points[index].temp <= points[index - 1].temp)
+			return false;
+		if (points[index].duty < points[index - 1].duty)
+			return false;
+	}
+	return true;
+}
+
 static int clevo_dchu_set_fan_curve(char *cpu_value, char *gpu_value)
 {
 	struct fan_curve_point cpu[FAN_CURVE_POINTS];
-	struct fan_curve_point gpu[FAN_CURVE_POINTS];
+	struct fan_curve_point gpu1[FAN_CURVE_POINTS];
+	struct fan_curve_point gpu2[FAN_CURVE_POINTS];
+	struct dchu_result write_result = { 0 };
 	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
 	int ret;
 
 	ret = parse_fan_curve_points(cpu_value, cpu);
 	if (ret)
 		return ret;
-	ret = parse_fan_curve_points(gpu_value, gpu);
+	ret = parse_fan_curve_points(gpu_value, gpu1);
 	if (ret)
 		return ret;
+	memcpy(gpu2, gpu1, sizeof(gpu2));
+
+	ret = fan_curve_load_firmware_anchors(cpu, gpu1, gpu2);
+	if (ret) {
+		pr_err("clevo_control_center: fan curve WMI13 anchor read failed: %d\n",
+		       ret);
+		return ret == -EIO ? -ENODATA : ret;
+	}
+	if (!fan_curve_channel_valid(cpu) || !fan_curve_channel_valid(gpu1) ||
+	    !fan_curve_channel_valid(gpu2))
+		return -ERANGE;
 
 	fan_curve_payload_channel(payload, 0, cpu);
-	fan_curve_payload_channel(payload, 1, gpu);
-	fan_curve_payload_channel(payload, 2, gpu);
+	fan_curve_payload_channel(payload, 1, gpu1);
+	fan_curve_payload_channel(payload, 2, gpu2);
 
-	ret = clevo_dchu_eval(0x0e, payload, sizeof(payload), NULL);
-	if (ret)
+	/* SetWMIPackage returns package-specific status rather than echoing 0x0e. */
+	ret = clevo_dchu_eval(0x0e, payload, sizeof(payload), &write_result);
+	if (ret) {
+		pr_err("clevo_control_center: fan curve WMI14 write failed: %d\n",
+		       ret);
 		return ret;
+	}
 
-	return clevo_dchu_set_fan_mode("custom");
+	ret = clevo_dchu_set_fan_mode("custom");
+	if (ret)
+		pr_err("clevo_control_center: custom fan mode switch failed: %d\n",
+		       ret);
+	return ret;
 }
 
 static int parse_gpu_mux_mode_name(const char *value, u8 *mode)
@@ -724,7 +795,7 @@ static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
 		"  echo 'fan-mode max' > /proc/clevo_dchu_control\n"
 		"  echo 'fan-mode silent' > /proc/clevo_dchu_control\n"
 		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n"
-		"  echo 'fan-curve 40:28,58:42,78:72,100:100 42:25,60:44,80:74,100:100' > /proc/clevo_dchu_control\n"
+		"  echo 'fan-curve 40:32,58:42,78:72,100:100 40:32,60:44,80:74,100:100' > /proc/clevo_dchu_control\n"
 		"  echo 'gpu-mux dgpu' > /proc/clevo_dchu_control\n"
 		"  echo 'gpu-mux mshybrid' > /proc/clevo_dchu_control\n";
 

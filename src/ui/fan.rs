@@ -96,6 +96,16 @@ fn fan_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp) {
         return;
     }
 
+    ui.label(
+        RichText::new(app.language.pick(
+            "首尾锚点由固件决定，只可调节中间两个点",
+            "Firmware controls the endpoints; only the two middle points are adjustable",
+        ))
+        .size(12.0)
+        .color(Color32::from_rgb(154, 147, 135)),
+    );
+    ui.add_space(8.0);
+
     let available_width = ui.available_width();
     let column_gap = 14.0;
     if available_width >= 520.0 {
@@ -148,31 +158,34 @@ fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChanne
     ));
 
     for (index, point_pos) in screen_points.iter().enumerate() {
+        let editable = matches!(index, 1 | 2);
         let selected = app.fan_curve_selection
             == Some(FanCurveSelection {
                 profile: profile_index,
                 channel,
                 point: index,
             });
-        let point_rect = Rect::from_center_size(*point_pos, vec2(18.0, 18.0));
-        let id = ui.make_persistent_id(("fan_curve_point", profile_index, channel, index));
-        let response = ui.interact(point_rect, id, Sense::click_and_drag());
-        if response.clicked() {
-            app.fan_curve_selection = Some(FanCurveSelection {
-                profile: profile_index,
-                channel,
-                point: index,
-            });
-        }
-        if response.dragged() {
-            if let Some(pointer) = response.interact_pointer_pos() {
-                let (temp, duty) = pos_to_curve_point(plot, pointer);
-                channel_curve_mut(app, channel).set_point(index, temp, duty);
+        if editable {
+            let point_rect = Rect::from_center_size(*point_pos, vec2(18.0, 18.0));
+            let id = ui.make_persistent_id(("fan_curve_point", profile_index, channel, index));
+            let response = ui.interact(point_rect, id, Sense::click_and_drag());
+            if response.clicked() {
                 app.fan_curve_selection = Some(FanCurveSelection {
                     profile: profile_index,
                     channel,
                     point: index,
                 });
+            }
+            if response.dragged() {
+                if let Some(pointer) = response.interact_pointer_pos() {
+                    let (temp, duty) = pos_to_curve_point(plot, pointer);
+                    channel_curve_mut(app, channel).set_point(index, temp, duty);
+                    app.fan_curve_selection = Some(FanCurveSelection {
+                        profile: profile_index,
+                        channel,
+                        point: index,
+                    });
+                }
             }
         }
 
@@ -181,7 +194,9 @@ fn draw_curve_editor(ui: &mut Ui, app: &mut ClevoLedApp, channel: FanCurveChanne
         painter.circle_filled(
             *point_pos,
             radius,
-            if selected {
+            if !editable {
+                Color32::from_rgb(112, 106, 96)
+            } else if selected {
                 palette.bright
             } else {
                 palette.dim

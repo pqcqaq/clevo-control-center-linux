@@ -123,6 +123,7 @@ impl ClevoLedApp {
             first_run_error: None,
         };
         app.settings_mtime = file_modified(&app.settings_path);
+        app.sync_fan_curve_firmware_anchors();
         app
     }
 
@@ -204,6 +205,27 @@ impl ClevoLedApp {
             .and_then(|snapshot| snapshot.dchu_config.as_ref())
             .map(|config| config.keyboard_lighting_capabilities())
             .unwrap_or_default()
+    }
+
+    pub(super) fn sync_fan_curve_firmware_anchors(&mut self) {
+        let Some(config) = self
+            .hardware
+            .as_ref()
+            .and_then(|snapshot| snapshot.dchu_config.as_ref())
+        else {
+            return;
+        };
+        let (Some(cpu), Some(gpu)) = (config.cpu_fan_curve_anchor(), config.gpu_fan_curve_anchor())
+        else {
+            return;
+        };
+
+        self.fan_curves.apply_firmware_anchors(cpu, gpu);
+        self.fan_curve_draft.apply_firmware_anchors(cpu, gpu);
+        if config.app_fan_mode != Some(6) {
+            self.fan_curves.selected_profile = None;
+            self.fan_curve_draft.selected_profile = None;
+        }
     }
 
     pub(super) fn set_language_preference(&mut self, preference: LanguagePreference) {
@@ -300,6 +322,7 @@ impl ClevoLedApp {
     }
 
     pub(super) fn save_fan_curve_draft(&mut self) {
+        self.sync_fan_curve_firmware_anchors();
         self.fan_curve_draft = self.fan_curve_draft.clone().sanitized();
         self.fan_curves = self.fan_curve_draft.clone();
         self.mark_settings_dirty();
@@ -318,6 +341,7 @@ impl ClevoLedApp {
         let defaults = default_fan_curve_profiles();
         if let Some(profile) = defaults.get(self.fan_curve_tab) {
             self.fan_curve_draft.profiles[self.fan_curve_tab] = profile.clone();
+            self.sync_fan_curve_firmware_anchors();
             self.fan_curve_selection = None;
         }
     }
@@ -369,6 +393,10 @@ impl ClevoLedApp {
     pub(super) fn set_power_mode(&mut self, mode: PowerMode) {
         match self.hardware_backend.set_power_mode(mode) {
             Ok(()) => {
+                self.fan_curves.selected_profile = None;
+                self.fan_curve_draft.selected_profile = None;
+                self.mark_settings_dirty();
+                self.persist_settings_if_due(true);
                 self.command_status = Some(match self.language {
                     UiLanguage::SimplifiedChinese => {
                         format!("已切换到{}模式", mode.localized_label(self.language))
@@ -472,6 +500,7 @@ impl ClevoLedApp {
                     );
                 }
                 self.hardware = Some(snapshot);
+                self.sync_fan_curve_firmware_anchors();
                 self.hardware_snapshot_mtime = file_modified(&self.hardware_snapshot_path);
                 if user_visible {
                     self.hardware_status = Some(

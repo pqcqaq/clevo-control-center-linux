@@ -90,7 +90,7 @@ impl FanCurve {
     }
 
     pub fn set_point(&mut self, index: usize, temp_celsius: u8, duty_percent: u8) {
-        if index >= self.points.len() {
+        if index == 0 || index + 1 >= self.points.len() {
             return;
         }
 
@@ -120,6 +120,31 @@ impl FanCurve {
             temp_celsius: temp_celsius.clamp(lower, upper),
             duty_percent: duty_percent.clamp(lower_duty, upper_duty),
         };
+    }
+
+    pub fn apply_firmware_anchor(&mut self, first: FanCurvePoint) {
+        *self = self.clone().sanitized();
+        let middle_1 = self.points[1];
+        let middle_2 = self.points[2];
+        self.points[0] = first;
+        self.points[3] = FanCurvePoint {
+            temp_celsius: FAN_CURVE_MAX_TEMP,
+            duty_percent: FAN_CURVE_MAX_DUTY,
+        };
+
+        self.points[1].temp_celsius = middle_1
+            .temp_celsius
+            .clamp(first.temp_celsius.saturating_add(1), FAN_CURVE_MAX_TEMP - 2);
+        self.points[2].temp_celsius = middle_2.temp_celsius.clamp(
+            self.points[1].temp_celsius.saturating_add(1),
+            FAN_CURVE_MAX_TEMP - 1,
+        );
+        self.points[1].duty_percent = middle_1
+            .duty_percent
+            .clamp(first.duty_percent, FAN_CURVE_MAX_DUTY);
+        self.points[2].duty_percent = middle_2
+            .duty_percent
+            .clamp(self.points[1].duty_percent, FAN_CURVE_MAX_DUTY);
     }
 }
 
@@ -203,27 +228,34 @@ impl FanCurveSettings {
             _ => None,
         }
     }
+
+    pub fn apply_firmware_anchors(&mut self, cpu: FanCurvePoint, gpu: FanCurvePoint) {
+        for profile in &mut self.profiles {
+            profile.cpu.apply_firmware_anchor(cpu);
+            profile.gpu.apply_firmware_anchor(gpu);
+        }
+    }
 }
 
 pub fn default_fan_curve_profiles() -> Vec<FanCurveProfile> {
     vec![
         FanCurveProfile {
-            cpu: curve(&[(40, 28), (58, 42), (78, 72), (95, 100)]),
-            gpu: curve(&[(42, 25), (60, 44), (80, 74), (96, 100)]),
+            cpu: curve(&[(40, 32), (58, 42), (78, 72), (100, 100)]),
+            gpu: curve(&[(40, 32), (60, 44), (80, 74), (100, 100)]),
         },
         FanCurveProfile {
-            cpu: curve(&[(38, 34), (55, 52), (72, 78), (90, 100)]),
-            gpu: curve(&[(40, 32), (58, 54), (74, 80), (92, 100)]),
+            cpu: curve(&[(40, 32), (55, 52), (72, 78), (100, 100)]),
+            gpu: curve(&[(40, 32), (58, 54), (74, 80), (100, 100)]),
         },
         FanCurveProfile {
-            cpu: curve(&[(45, 20), (62, 35), (82, 66), (98, 100)]),
-            gpu: curve(&[(45, 20), (64, 38), (84, 68), (98, 100)]),
+            cpu: curve(&[(40, 32), (62, 35), (82, 66), (100, 100)]),
+            gpu: curve(&[(40, 32), (64, 38), (84, 68), (100, 100)]),
         },
     ]
 }
 
 fn default_curve_points() -> Vec<FanCurvePoint> {
-    curve(&[(40, 28), (58, 42), (78, 72), (95, 100)]).points
+    curve(&[(40, 32), (58, 42), (78, 72), (100, 100)]).points
 }
 
 fn curve(points: &[(u8, u8)]) -> FanCurve {
@@ -287,6 +319,63 @@ mod tests {
             curve.points[2].temp_celsius - 1
         );
         assert_eq!(curve.points[1].duty_percent, curve.points[2].duty_percent);
+    }
+
+    #[test]
+    fn fixed_endpoints_cannot_be_edited() {
+        let mut curve = FanCurve::default();
+        let first = curve.points[0];
+        let last = curve.points[3];
+
+        curve.set_point(0, 55, 80);
+        curve.set_point(3, 90, 90);
+
+        assert_eq!(curve.points[0], first);
+        assert_eq!(curve.points[3], last);
+    }
+
+    #[test]
+    fn firmware_anchor_replaces_legacy_endpoints_and_clamps_middle_points() {
+        let mut curve = FanCurve {
+            points: vec![
+                FanCurvePoint {
+                    temp_celsius: 30,
+                    duty_percent: 10,
+                },
+                FanCurvePoint {
+                    temp_celsius: 38,
+                    duty_percent: 20,
+                },
+                FanCurvePoint {
+                    temp_celsius: 78,
+                    duty_percent: 70,
+                },
+                FanCurvePoint {
+                    temp_celsius: 95,
+                    duty_percent: 90,
+                },
+            ],
+        };
+
+        curve.apply_firmware_anchor(FanCurvePoint {
+            temp_celsius: 40,
+            duty_percent: 32,
+        });
+
+        assert_eq!(curve.points[0].temp_celsius, 40);
+        assert_eq!(curve.points[0].duty_percent, 32);
+        assert_eq!(curve.points[1].temp_celsius, 41);
+        assert_eq!(curve.points[1].duty_percent, 32);
+        assert_eq!(curve.points[3].temp_celsius, 100);
+        assert_eq!(curve.points[3].duty_percent, 100);
+        assert!(curve
+            .points
+            .windows(2)
+            .all(|pair| pair[0].temp_celsius < pair[1].temp_celsius));
+        assert!(curve
+            .points
+            .windows(2)
+            .all(|pair| pair[0].duty_percent <= pair[1].duty_percent));
     }
 
     #[test]
