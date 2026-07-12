@@ -206,6 +206,12 @@ pub struct DchuConfig {
     #[serde(default)]
     pub bios_feature_version: Option<u16>,
     #[serde(default)]
+    pub bios_feature_offset15: Option<u8>,
+    #[serde(default)]
+    pub bios_feature_offset16: Option<u8>,
+    #[serde(default)]
+    pub bios_feature_offset17: Option<u8>,
+    #[serde(default)]
     pub bios_feature_offset18: Option<u8>,
     #[serde(default)]
     pub gpu_mux_current: Option<u8>,
@@ -215,6 +221,30 @@ pub struct DchuConfig {
     pub app_power_mode: Option<u8>,
     #[serde(default)]
     pub app_fan_mode: Option<u8>,
+    #[serde(default)]
+    pub battery_saver_status: Option<u8>,
+    #[serde(default)]
+    pub battery_info_version: Option<u16>,
+    #[serde(default)]
+    pub battery_manufacture_date_raw: Option<u16>,
+    #[serde(default)]
+    pub battery_cycle_count: Option<u16>,
+    #[serde(default)]
+    pub battery_full_charge_capacity: Option<u16>,
+    #[serde(default)]
+    pub battery_design_capacity: Option<u16>,
+    #[serde(default)]
+    pub battery_status: Option<u16>,
+    #[serde(default)]
+    pub battery_pf_status: Option<u32>,
+    #[serde(default)]
+    pub battery_operation_status: Option<u32>,
+    #[serde(default)]
+    pub battery_stop_charging_threshold: Option<u8>,
+    #[serde(default)]
+    pub energy_save_default_charge_limit: Option<u8>,
+    #[serde(default)]
+    pub energy_save_default_discharge_limit: Option<u8>,
     #[serde(default)]
     pub raw_config: Vec<u8>,
 }
@@ -319,12 +349,56 @@ impl DchuConfig {
         capability_bit(self.psf2, 24)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn energy_save_capability(&self) -> Option<bool> {
         capability_bit(self.psf5, 8)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn battery_utility_capability(&self) -> Option<bool> {
         capability_bit(self.psf5, 9)
+    }
+
+    pub fn battery_saver_capability(&self) -> Option<bool> {
+        if self.bios_feature_version != Some(0x0100) {
+            return None;
+        }
+        self.bios_feature_offset15
+            .map(|value| value & (1 << 2) != 0)
+    }
+
+    pub fn battery_saver_enabled(&self) -> Option<bool> {
+        if self.battery_saver_capability() != Some(true) {
+            return None;
+        }
+        match self.battery_saver_status? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
+
+    pub fn battery_info_available(&self) -> bool {
+        self.battery_full_charge_capacity.unwrap_or_default() > 0
+            && self.battery_design_capacity.unwrap_or_default() > 0
+    }
+
+    pub fn battery_health_percent(&self) -> Option<u8> {
+        if !self.battery_info_available() {
+            return None;
+        }
+        let full = u32::from(self.battery_full_charge_capacity?);
+        let design = u32::from(self.battery_design_capacity?);
+        Some(((full * 100 + design / 2) / design).min(100) as u8)
+    }
+
+    #[cfg(test)]
+    pub fn battery_manufacture_date(&self) -> Option<(u16, u8, u8)> {
+        let raw = self.battery_manufacture_date_raw?;
+        let day = (raw & 0x1f) as u8;
+        let month = ((raw >> 5) & 0x0f) as u8;
+        let year = 1980 + (raw >> 9);
+        (day > 0 && day <= 31 && month > 0 && month <= 12).then_some((year, month, day))
     }
 
     #[cfg(any(debug_assertions, test))]
@@ -385,6 +459,60 @@ fn any_known_capability(values: &[Option<bool>]) -> Option<bool> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum BatteryCapacityUnit {
+    #[serde(rename = "Mah")]
+    MilliampHours,
+    #[serde(rename = "Mwh")]
+    MilliwattHours,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum BatteryChargeStatus {
+    #[serde(rename = "Charging")]
+    Charging,
+    #[serde(rename = "Discharging")]
+    Discharging,
+    #[serde(rename = "Full")]
+    Full,
+    #[serde(rename = "Not charging")]
+    NotCharging,
+    #[serde(rename = "Unknown")]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SystemBatteryInfo {
+    #[serde(default)]
+    pub charge_percent: Option<u8>,
+    #[serde(default)]
+    pub status: Option<BatteryChargeStatus>,
+    #[serde(default)]
+    pub full_capacity: Option<u64>,
+    #[serde(default)]
+    pub design_capacity: Option<u64>,
+    #[serde(default)]
+    pub capacity_unit: Option<BatteryCapacityUnit>,
+}
+
+impl SystemBatteryInfo {
+    pub(crate) fn has_data(&self) -> bool {
+        self.charge_percent.is_some()
+            || self.status.is_some()
+            || self.full_capacity.is_some()
+            || self.design_capacity.is_some()
+    }
+
+    pub fn health_percent(&self) -> Option<u8> {
+        let full = u128::from(self.full_capacity?);
+        let design = u128::from(self.design_capacity?);
+        if design == 0 {
+            return None;
+        }
+        Some(((full * 100 + design / 2) / design).min(100) as u8)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HardwareSnapshot {
     pub fans: Vec<FanStatus>,
@@ -394,6 +522,8 @@ pub struct HardwareSnapshot {
     pub raw_status: Vec<u8>,
     #[serde(default)]
     pub dchu_config: Option<DchuConfig>,
+    #[serde(default)]
+    pub system_battery: Option<SystemBatteryInfo>,
     pub battery_voltage_raw: u16,
     pub battery_rate_raw: u16,
     pub thermal_raw: [u8; 4],

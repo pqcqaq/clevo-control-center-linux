@@ -24,6 +24,7 @@ pub fn print_dchu_usage() {
         "  clevo-control-center dchu fan-curve <cpu t:d,t:d,t:d,t:d> <gpu t:d,t:d,t:d,t:d> --i-understand"
     );
     println!("  clevo-control-center dchu gpu-mux <dgpu|mshybrid> --i-understand");
+    println!("  clevo-control-center dchu battery-saver <on|off> --i-understand");
 }
 
 pub(super) fn parse_fan_mode(value: &str) -> Result<FanMode, String> {
@@ -48,6 +49,17 @@ fn run_gpu_mux_mode(hardware: &dyn HardwareBackend, value: &str) -> Result<(), S
     let mode = parse_gpu_mux_mode(value)?;
     hardware.set_gpu_mux(mode)?;
     println!("GPU MUX mode set");
+    Ok(())
+}
+
+fn run_battery_saver(hardware: &dyn HardwareBackend, value: &str) -> Result<(), String> {
+    let enabled = match value {
+        "on" | "1" => true,
+        "off" | "0" => false,
+        _ => return Err("battery-saver must be on or off".to_owned()),
+    };
+    hardware.set_battery_saver(enabled)?;
+    println!("battery saver set");
     Ok(())
 }
 
@@ -148,6 +160,13 @@ pub fn run_dchu_cli(args: &[String], hardware: &dyn HardwareBackend) -> Result<(
             run_gpu_mux_mode(
                 hardware,
                 args.get(1).ok_or("gpu-mux requires <dgpu|mshybrid>")?,
+            )?;
+        }
+        "battery-saver" => {
+            require_danger_flag(args)?;
+            run_battery_saver(
+                hardware,
+                args.get(1).ok_or("battery-saver requires <on|off>")?,
             )?;
         }
         "fan-curve" => {

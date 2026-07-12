@@ -42,5 +42,5 @@
 ## 不再公开的内容
 
 - 不再提供任意 DCHU function 读取或写入入口。
-- 不再提供 GPU/CPU 超频、Battery Saver、EnergySave、AntiDust 等未收敛为稳定 UI 控件的写入命令。GPU MUX 只开放 `dGPU`/`MSHybrid` 白名单模式；“电池”页面只保存本地策略配置，不进入当前 DCHU 写接口。
+- 不再提供 GPU/CPU 超频、EnergySave、Battery Utility 刷新、AntiDust 等尚未形成安全读回或恢复流程的写入命令。GPU MUX 只开放 `dGPU`/`MSHybrid` 白名单模式；Battery Saver 只开放 `on/off`，内核先检查 `WMI4/sub8 offset15 bit2`，再调用 WMI4/sub13，并以写后读回不一致作为失败。
 - 不再创建 `/proc/clevo_dchu` 调试节点。

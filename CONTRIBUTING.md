@@ -55,7 +55,7 @@ scripts/package-release.sh
 - GUI、后台服务和 CLI 通过 `HardwareBackend` 使用硬件能力，不要把 `/proc` 文本协议散落到 UI 代码。
 - 按业务职责拆分模块，不增加只包装少量代码的 `helpers.rs`、`utils.rs` 或 `common.rs`。
 - 内核模块只保留经过验证的白名单命令；不要加入任意 function、offset 或 raw payload 入口。
-- 电池页目前只保存本地策略，不写 EC；不要在没有完整协议和恢复方案时改变这一边界。
+- 电池页只读取已确认的 WMI7/OEM 状态，并通过受能力位保护的 `battery-saver on/off` 白名单写入；不要绕过能力检查，也不要在缺少状态读回和恢复方案时开放 EnergySave 阈值、Battery Utility 刷新或任意 WMI/EC payload。
 - `Diagnostics` 和 `Advanced` 仅存在于 debug 构建，Release UI 不应暴露内部诊断入口。
 - 不要为消除警告大范围加入 `allow`，应处理实际类型、所有权或条件编译问题。
 

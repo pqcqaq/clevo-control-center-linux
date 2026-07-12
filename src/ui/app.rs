@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::battery_strategy::BatteryStrategySettings;
 use crate::dchu::{
     self, FanMode, GpuMuxMode, HardwareSnapshot, KeyboardLightingCapabilities,
     KeyboardLightingLayout, PowerMode,
@@ -43,7 +42,6 @@ pub struct ClevoLedApp {
     pub(super) fan_curve_draft: FanCurveSettings,
     pub(super) fan_curve_tab: usize,
     pub(super) fan_curve_selection: Option<FanCurveSelection>,
-    pub(super) battery_strategy: BatteryStrategySettings,
     pub(super) language_preference: LanguagePreference,
     pub(super) language: UiLanguage,
     pub(super) theme_color: ThemeColor,
@@ -115,7 +113,6 @@ impl ClevoLedApp {
             fan_curve_draft: settings.fan_curves,
             fan_curve_tab: 0,
             fan_curve_selection: None,
-            battery_strategy: settings.battery_strategy,
             language_preference: settings.language,
             language,
             theme_color: settings.theme_color,
@@ -212,7 +209,6 @@ impl ClevoLedApp {
             f0_color: self.f0_color,
             zones: self.selected_zones(),
             fan_curves: self.fan_curves.clone(),
-            battery_strategy: self.battery_strategy.clone(),
             language: self.language_preference,
             theme_color: self.theme_color,
             window_pos: self.window_pos,
@@ -410,15 +406,29 @@ impl ClevoLedApp {
         }
     }
 
-    pub(super) fn set_battery_strategy_enabled(&mut self, enabled: bool) {
-        self.battery_strategy.enabled = enabled;
-        self.save_battery_strategy();
-    }
-
-    pub(super) fn save_battery_strategy(&mut self) {
-        self.battery_strategy = self.battery_strategy.clone().sanitized();
-        self.mark_settings_dirty();
-        self.persist_settings_if_due(true);
+    pub(super) fn set_battery_saver_enabled(&mut self, enabled: bool) {
+        match self.hardware_backend.set_battery_saver(enabled) {
+            Ok(()) => {
+                self.command_status = Some(
+                    self.language
+                        .pick("固件电池保护已更新", "Firmware battery protection updated")
+                        .to_owned(),
+                );
+                self.command_output.clear();
+                self.refresh_hardware_snapshot(false);
+            }
+            Err(err) => {
+                self.command_status = Some(
+                    self.language
+                        .pick(
+                            "固件电池保护设置失败",
+                            "Could not update firmware battery protection",
+                        )
+                        .to_owned(),
+                );
+                self.command_output = err;
+            }
+        }
     }
 
     #[cfg(debug_assertions)]

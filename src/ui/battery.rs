@@ -1,454 +1,357 @@
-use eframe::egui::{
-    self, pos2, vec2, Align, Align2, Color32, DragValue, FontId, Frame, Layout, Rect, RichText,
-    Sense, Slider, Stroke, Ui,
-};
+use eframe::egui::{pos2, vec2, Align, Color32, Frame, Layout, Rect, RichText, Sense, Stroke, Ui};
 
 use super::app::ClevoLedApp;
+use super::theme;
 use super::widgets::page_header;
-use crate::battery_strategy::{
-    BatteryStrategyPreset, CHARGE_START_MAX, CHARGE_START_MIN, CHARGE_STOP_MAX, CHARGE_STOP_MIN,
-    LOW_BATTERY_MAX, LOW_BATTERY_MIN,
-};
+use crate::dchu::{BatteryCapacityUnit, BatteryChargeStatus, DchuConfig, SystemBatteryInfo};
+use crate::preferences::UiLanguage;
 
 pub(super) fn battery_page(ui: &mut Ui, app: &mut ClevoLedApp) {
+    let language = app.language;
     page_header(
         ui,
-        app.language.pick("电池", "Battery"),
-        app.language.pick(
-            "充电窗口与低电量保护",
-            "Charge window and low-battery protection",
+        language.pick("电池", "Battery"),
+        language.pick(
+            "电池健康、当前状态与充电保护",
+            "Battery health, live status and charge protection",
         ),
     );
+
+    let config = app
+        .hardware
+        .as_ref()
+        .and_then(|snapshot| snapshot.dchu_config.as_ref());
+    let system_battery = app
+        .hardware
+        .as_ref()
+        .and_then(|snapshot| snapshot.system_battery.as_ref());
+    let palette = theme::palette(app.theme_color);
+    let command_status = app.command_status.as_deref();
+    let command_output = app.command_output.as_str();
+    let mut battery_saver_request = None;
 
     Frame::none()
         .fill(Color32::from_rgb(28, 29, 28))
         .stroke(Stroke::new(1.0, Color32::from_rgb(52, 57, 54)))
         .rounding(8.0)
-        .inner_margin(egui::Margin::same(16.0))
+        .inner_margin(eframe::egui::Margin::same(16.0))
         .show(ui, |ui| {
-            strategy_overview(ui, app);
+            health_summary(ui, language, config, system_battery);
             section_divider(ui);
 
-            ui.add_enabled_ui(app.battery_strategy.enabled, |ui| {
-                preset_selector(ui, app);
+            let available_width = ui.available_width();
+            if available_width >= 620.0 {
+                ui.columns(2, |columns| {
+                    columns[0].set_width((available_width - 26.0) * 0.5);
+                    columns[1].set_width((available_width - 26.0) * 0.5);
+                    health_details(&mut columns[0], language, config, system_battery);
+                    battery_saver_request =
+                        firmware_protection(&mut columns[1], language, config, palette.accent);
+                });
+            } else {
+                health_details(ui, language, config, system_battery);
                 section_divider(ui);
-
-                let available_width = ui.available_width();
-                if available_width >= 620.0 {
-                    ui.columns(2, |columns| {
-                        columns[0].set_width((available_width - 24.0) * 0.5);
-                        columns[1].set_width((available_width - 24.0) * 0.5);
-                        threshold_section(&mut columns[0], app);
-                        protection_section(&mut columns[1], app);
-                    });
-                } else {
-                    threshold_section(ui, app);
-                    section_divider(ui);
-                    protection_section(ui, app);
-                }
-            });
-
-            section_divider(ui);
-            capability_status(ui, app);
+                battery_saver_request = firmware_protection(ui, language, config, palette.accent);
+            }
+            battery_action_status(ui, command_status, command_output);
         });
+
+    if let Some(enabled) = battery_saver_request {
+        app.set_battery_saver_enabled(enabled);
+    }
 }
 
-fn strategy_overview(ui: &mut Ui, app: &mut ClevoLedApp) {
+fn health_summary(
+    ui: &mut Ui,
+    language: UiLanguage,
+    config: Option<&DchuConfig>,
+    system_battery: Option<&SystemBatteryInfo>,
+) {
+    let oem_health = config.and_then(DchuConfig::battery_health_percent);
+    let health = oem_health.or_else(|| system_battery.and_then(SystemBatteryInfo::health_percent));
+    let color = health_color(health);
+
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(
-                RichText::new(app.language.pick("充电窗口", "Charge window"))
+                RichText::new(language.pick("电池健康度", "Battery health"))
                     .size(12.0)
                     .color(Color32::from_rgb(145, 153, 148)),
             );
-            ui.label(
-                RichText::new(format!(
-                    "{}–{}%",
-                    app.battery_strategy.charge_start_percent,
-                    app.battery_strategy.charge_stop_percent
-                ))
-                .size(30.0)
-                .strong()
-                .color(Color32::from_rgb(236, 241, 238)),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(
+                        health
+                            .map(|value| format!("{value}%"))
+                            .unwrap_or_else(|| "--".to_owned()),
+                    )
+                    .size(30.0)
+                    .strong()
+                    .color(Color32::from_rgb(236, 241, 238)),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(match health {
+                        Some(80..=100) => language.pick("状态良好", "Healthy"),
+                        Some(60..=79) => language.pick("已有损耗", "Worn"),
+                        Some(_) => language.pick("建议检查", "Check battery"),
+                        None => language.pick("等待电池数据", "Waiting for battery data"),
+                    })
+                    .size(12.0)
+                    .color(color),
+                );
+            });
         });
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if battery_toggle(ui, app.battery_strategy.enabled) {
-                app.set_battery_strategy_enabled(!app.battery_strategy.enabled);
-            }
+            let oem_telemetry = config.is_some_and(DchuConfig::battery_info_available);
+            let system_telemetry = system_battery.is_some();
             ui.label(
-                RichText::new(if app.battery_strategy.enabled {
-                    app.language.pick("策略已启用", "Policy enabled")
+                RichText::new(if oem_telemetry {
+                    language.pick("固件数据", "Firmware data")
+                } else if system_telemetry {
+                    language.pick("系统电池数据", "System battery data")
                 } else {
-                    app.language.pick("策略未启用", "Policy disabled")
+                    language.pick("暂时无数据", "No data available")
                 })
-                .size(13.0)
-                .color(if app.battery_strategy.enabled {
-                    accent()
+                .size(11.0)
+                .color(if oem_telemetry || system_telemetry {
+                    Color32::from_rgb(137, 181, 158)
                 } else {
-                    Color32::from_rgb(142, 148, 144)
+                    Color32::from_rgb(118, 124, 120)
                 }),
             );
         });
     });
 
-    ui.add_space(12.0);
-    charge_window_meter(ui, app);
+    ui.add_space(10.0);
+    health_meter(ui, health, color);
 }
 
-fn charge_window_meter(ui: &mut Ui, app: &ClevoLedApp) {
-    let language = app.language;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::hover());
+fn health_meter(ui: &mut Ui, health: Option<u8>, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
     let painter = ui.painter_at(rect);
     let track = Rect::from_min_max(
         pos2(rect.left() + 2.0, rect.center().y - 5.0),
         pos2(rect.right() - 2.0, rect.center().y + 5.0),
     );
-    let start_x =
-        track.left() + track.width() * percent_t(app.battery_strategy.charge_start_percent);
-    let stop_x = track.left() + track.width() * percent_t(app.battery_strategy.charge_stop_percent);
-    let active = Rect::from_min_max(
-        pos2(start_x, track.top()),
-        pos2(stop_x.max(start_x + 2.0), track.bottom()),
-    );
-    let active_color = if app.battery_strategy.enabled {
-        accent()
-    } else {
-        Color32::from_rgb(91, 100, 95)
-    };
-
     painter.rect_filled(track, 5.0, Color32::from_rgb(45, 49, 47));
-    painter.rect_filled(active, 5.0, active_color);
-
+    if let Some(health) = health {
+        let fill = Rect::from_min_max(
+            track.min,
+            pos2(
+                track.left() + track.width() * f32::from(health) / 100.0,
+                track.bottom(),
+            ),
+        );
+        painter.rect_filled(fill, 5.0, color);
+    }
     for percent in [0_u8, 25, 50, 75, 100] {
-        let x = track.left() + track.width() * percent_t(percent);
+        let x = track.left() + track.width() * f32::from(percent) / 100.0;
         painter.line_segment(
-            [pos2(x, track.top() - 5.0), pos2(x, track.bottom() + 5.0)],
-            Stroke::new(1.0, Color32::from_rgb(71, 78, 74)),
-        );
-        let alignment = match percent {
-            0 => Align2::LEFT_TOP,
-            100 => Align2::RIGHT_TOP,
-            _ => Align2::CENTER_TOP,
-        };
-        painter.text(
-            pos2(x, track.bottom() + 13.0),
-            alignment,
-            percent,
-            FontId::proportional(10.0),
-            Color32::from_rgb(118, 126, 121),
-        );
-    }
-
-    for (x, label, value, alignment) in [
-        (
-            start_x,
-            language.pick("开始", "Start"),
-            app.battery_strategy.charge_start_percent,
-            Align2::RIGHT_BOTTOM,
-        ),
-        (
-            stop_x,
-            language.pick("停止", "Stop"),
-            app.battery_strategy.charge_stop_percent,
-            Align2::LEFT_BOTTOM,
-        ),
-    ] {
-        painter.circle_filled(
-            pos2(x, track.center().y),
-            7.0,
-            Color32::from_rgb(24, 27, 25),
-        );
-        painter.circle_stroke(
-            pos2(x, track.center().y),
-            7.0,
-            Stroke::new(2.0, active_color),
-        );
-        painter.text(
-            pos2(x, track.top() - 9.0),
-            alignment,
-            format!("{label} {value}%"),
-            FontId::proportional(11.0),
-            Color32::from_rgb(203, 211, 206),
+            [pos2(x, track.top() - 3.0), pos2(x, track.bottom() + 3.0)],
+            Stroke::new(1.0, Color32::from_rgb(73, 79, 75)),
         );
     }
 }
 
-fn preset_selector(ui: &mut Ui, app: &mut ClevoLedApp) {
+fn health_details(
+    ui: &mut Ui,
+    language: UiLanguage,
+    config: Option<&DchuConfig>,
+    system_battery: Option<&SystemBatteryInfo>,
+) {
+    let oem_config = config.filter(|item| item.battery_info_available());
     section_title(
         ui,
-        app.language.pick("策略预设", "Policy presets"),
-        app.battery_strategy
-            .preset
-            .localized_description(app.language),
+        language.pick("当前状态", "Live status"),
+        language.pick("充电状态与可用容量", "Charge state and usable capacity"),
     );
     ui.add_space(10.0);
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let width = ((ui.available_width() - 16.0) / 3.0).max(96.0);
-        for preset in BatteryStrategyPreset::all() {
-            let selected = app.battery_strategy.preset == *preset;
-            let id = ui.make_persistent_id(("battery_preset", *preset));
-            let (rect, _) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
-            let response = ui.interact(rect, id, Sense::click());
-            let hover_t = ui.ctx().animate_bool_with_time(
-                response.id.with("hover"),
-                response.hovered(),
-                0.12,
-            );
-            let selected_t =
-                ui.ctx()
-                    .animate_bool_with_time(response.id.with("selected"), selected, 0.16);
-            let painter = ui.painter_at(rect.expand(2.0));
-            let fill = mix_color(
-                Color32::from_rgb(34, 37, 35),
-                Color32::from_rgb(30, 64, 52),
-                selected_t,
-            );
-            let stroke = mix_color(
-                Color32::from_rgb(59, 65, 61),
-                accent(),
-                selected_t.max(hover_t * 0.55),
-            );
-            painter.rect_filled(rect, 6.0, fill);
-            painter.rect_stroke(rect, 6.0, Stroke::new(1.0 + selected_t * 0.4, stroke));
-            painter.text(
-                pos2(rect.center().x, rect.center().y - 7.0),
-                Align2::CENTER_CENTER,
-                preset.localized_label(app.language),
-                FontId::proportional(13.0),
-                Color32::from_rgb(231, 237, 233),
-            );
-            painter.text(
-                pos2(rect.center().x, rect.center().y + 10.0),
-                Align2::CENTER_CENTER,
-                preset_range(*preset),
-                FontId::proportional(11.0),
-                if selected {
-                    accent()
-                } else {
-                    Color32::from_rgb(133, 142, 136)
-                },
-            );
-
-            if response.clicked() {
-                app.battery_strategy.apply_preset(*preset);
-                app.save_battery_strategy();
-            }
-        }
-    });
-}
-
-fn threshold_section(ui: &mut Ui, app: &mut ClevoLedApp) {
-    let language = app.language;
-    section_title(
-        ui,
-        language.pick("充电阈值", "Charge thresholds"),
-        language.pick("控制电池保持区间", "Set the battery maintenance range"),
-    );
-    ui.add_space(10.0);
-
-    let start_max =
-        CHARGE_START_MAX.min(app.battery_strategy.charge_stop_percent.saturating_sub(5));
-    let stop_min = CHARGE_STOP_MIN.max(app.battery_strategy.charge_start_percent.saturating_add(5));
-    let mut changed = false;
-    changed |= threshold_control(
-        ui,
-        language.pick("开始充电", "Start charging"),
-        &mut app.battery_strategy.charge_start_percent,
-        CHARGE_START_MIN,
-        start_max,
-    );
-    ui.add_space(10.0);
-    changed |= threshold_control(
-        ui,
-        language.pick("停止充电", "Stop charging"),
-        &mut app.battery_strategy.charge_stop_percent,
-        stop_min,
-        CHARGE_STOP_MAX,
-    );
-
-    if changed {
-        app.save_battery_strategy();
-    }
-}
-
-fn threshold_control(ui: &mut Ui, label: &str, value: &mut u8, min: u8, max: u8) -> bool {
-    let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(label)
-                .size(12.0)
-                .color(Color32::from_rgb(196, 204, 199)),
+            RichText::new(
+                system_battery
+                    .and_then(|item| item.charge_percent)
+                    .map(|value| format!("{value}%"))
+                    .unwrap_or_else(|| "--".to_owned()),
+            )
+            .size(26.0)
+            .strong()
+            .color(Color32::from_rgb(232, 238, 234)),
         );
         ui.add_space(6.0);
-        changed |= ui
-            .add(DragValue::new(value).range(min..=max).suffix("%"))
-            .changed();
-    });
-    let slider_width = ui.available_width().max(140.0);
-    ui.spacing_mut().slider_width = slider_width;
-    changed |= ui
-        .add(Slider::new(value, min..=max).show_value(false))
-        .changed();
-    changed
-}
-
-fn protection_section(ui: &mut Ui, app: &mut ClevoLedApp) {
-    let language = app.language;
-    section_title(
-        ui,
-        language.pick("保护行为", "Protection behavior"),
-        language.pick(
-            "电池供电与低电量响应",
-            "Battery-power and low-charge response",
-        ),
-    );
-    ui.add_space(8.0);
-
-    let mut changed = false;
-    changed |= setting_row(
-        ui,
-        language.pick("电池供电节能", "Save power on battery"),
-        &mut app.battery_strategy.energy_save_on_battery,
-    );
-    changed |= setting_row(
-        ui,
-        language.pick("低电量保护", "Low-battery protection"),
-        &mut app.battery_strategy.low_battery_protection,
-    );
-
-    if app.battery_strategy.low_battery_protection {
-        ui.add_space(6.0);
-        changed |= threshold_control(
-            ui,
-            language.pick("触发阈值", "Trigger threshold"),
-            &mut app.battery_strategy.low_battery_threshold_percent,
-            LOW_BATTERY_MIN,
-            LOW_BATTERY_MAX,
-        );
-        ui.add_space(4.0);
-        changed |= setting_row(
-            ui,
-            language.pick("同步降低键盘亮度", "Reduce keyboard brightness"),
-            &mut app.battery_strategy.reduce_keyboard_brightness,
-        );
-    }
-
-    if changed {
-        app.save_battery_strategy();
-    }
-}
-
-fn setting_row(ui: &mut Ui, label: &str, value: &mut bool) -> bool {
-    let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(label)
-                .size(12.0)
-                .color(Color32::from_rgb(196, 204, 199)),
-        );
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if battery_toggle(ui, *value) {
-                *value = !*value;
-                clicked = true;
-            }
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new(language.pick("当前电量", "Charge"))
+                    .size(10.0)
+                    .color(Color32::from_rgb(126, 135, 129)),
+            );
+            ui.label(
+                RichText::new(localized_charge_status(language, system_battery))
+                    .size(11.0)
+                    .color(Color32::from_rgb(191, 201, 195)),
+            );
         });
     });
-    ui.add_space(7.0);
-    clicked
+    ui.add_space(12.0);
+    detail_row(
+        ui,
+        language.pick("可用 / 设计容量", "Usable / design capacity"),
+        oem_config
+            .and_then(|item| {
+                Some(format!(
+                    "{} / {} mAh",
+                    item.battery_full_charge_capacity?, item.battery_design_capacity?
+                ))
+            })
+            .or_else(|| system_capacity_label(system_battery))
+            .unwrap_or_else(|| "--".to_owned()),
+    );
 }
 
-fn battery_toggle(ui: &mut Ui, enabled: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(42.0, 22.0), Sense::click());
-    let t = ui
-        .ctx()
-        .animate_bool_with_time(response.id.with("battery_toggle"), enabled, 0.14);
-    let hover_t = ui.ctx().animate_bool_with_time(
-        response.id.with("battery_toggle_hover"),
-        response.hovered(),
-        0.1,
-    );
-    let painter = ui.painter_at(rect.expand(2.0));
-    painter.rect_filled(
-        rect,
-        11.0,
-        mix_color(
-            Color32::from_rgb(46, 51, 48),
-            Color32::from_rgb(31, 91, 69),
-            t,
+fn firmware_protection(
+    ui: &mut Ui,
+    language: UiLanguage,
+    config: Option<&DchuConfig>,
+    accent: Color32,
+) -> Option<bool> {
+    section_title(
+        ui,
+        language.pick("充电保护", "Charge protection"),
+        language.pick(
+            "降低长期满充带来的电池损耗",
+            "Helps reduce wear from prolonged full charge",
         ),
     );
-    painter.rect_stroke(
-        rect,
-        11.0,
-        Stroke::new(
-            1.0,
-            mix_color(
-                Color32::from_rgb(70, 77, 73),
-                accent(),
-                t.max(hover_t * 0.5),
-            ),
-        ),
-    );
-    painter.circle_filled(
-        pos2(
-            rect.left() + 11.0 + (rect.width() - 22.0) * t,
-            rect.center().y,
-        ),
-        7.0,
-        Color32::from_rgb(231, 238, 234),
-    );
-    response.clicked()
+    ui.add_space(10.0);
+
+    let supported = config.and_then(DchuConfig::battery_saver_capability);
+    let enabled = config.and_then(DchuConfig::battery_saver_enabled);
+    let current_state = enabled.unwrap_or(false);
+    let mut requested_state = None;
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new(match (supported, enabled) {
+                    (Some(true), Some(true)) => language.pick("已开启", "On"),
+                    (Some(true), Some(false)) => language.pick("已关闭", "Off"),
+                    (Some(true), None) => language.pick("暂时不可用", "Unavailable"),
+                    (Some(false), _) => {
+                        language.pick("此机型暂不支持", "Not available on this model")
+                    }
+                    (None, _) => language.pick("正在检测", "Checking support"),
+                })
+                .size(14.0)
+                .strong()
+                .color(if enabled == Some(true) {
+                    accent
+                } else {
+                    Color32::from_rgb(176, 182, 178)
+                }),
+            );
+            let explanation = match supported {
+                Some(false) => language.pick(
+                    "固件未开放该控制能力，已自动锁定以保护设备",
+                    "Firmware control is unavailable and has been safely locked",
+                ),
+                Some(true) => language.pick(
+                    "切换后会立即确认固件状态",
+                    "Firmware state is verified after each change",
+                ),
+                _ => language.pick(
+                    "读取固件能力后即可使用",
+                    "Available after firmware detection",
+                ),
+            };
+            ui.label(
+                RichText::new(explanation)
+                    .size(11.0)
+                    .color(Color32::from_rgb(126, 135, 129)),
+            );
+        });
+
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let interactive = supported == Some(true) && enabled.is_some();
+            ui.add_enabled_ui(interactive, |ui| {
+                if battery_toggle(ui, current_state, accent) {
+                    requested_state = Some(!current_state);
+                }
+            });
+        });
+    });
+    requested_state
 }
 
-fn capability_status(ui: &mut Ui, app: &ClevoLedApp) {
-    let config = app
-        .hardware
-        .as_ref()
-        .and_then(|snapshot| snapshot.dchu_config.as_ref());
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(14.0, 6.0);
-        status_item(
-            ui,
-            app.language.pick("配置", "Configuration"),
-            Some(true),
-            app.language.pick("本地", "Local"),
+fn system_capacity_label(battery: Option<&SystemBatteryInfo>) -> Option<String> {
+    let battery = battery?;
+    let full = battery.full_capacity?;
+    let design = battery.design_capacity?;
+    let unit = match battery.capacity_unit? {
+        BatteryCapacityUnit::MilliampHours => "mAh",
+        BatteryCapacityUnit::MilliwattHours => "mWh",
+    };
+    Some(format!("{full} / {design} {unit}"))
+}
+
+fn localized_charge_status(
+    language: UiLanguage,
+    battery: Option<&SystemBatteryInfo>,
+) -> &'static str {
+    match battery.and_then(|item| item.status) {
+        Some(BatteryChargeStatus::Charging) => language.pick("正在充电", "Charging"),
+        Some(BatteryChargeStatus::Discharging) => language.pick("电池供电", "On battery"),
+        Some(BatteryChargeStatus::Full) => language.pick("已充满", "Fully charged"),
+        Some(BatteryChargeStatus::NotCharging) => {
+            language.pick("已接通，未充电", "Plugged in, not charging")
+        }
+        Some(BatteryChargeStatus::Unknown) | None => language.pick("状态未知", "Status unknown"),
+    }
+}
+
+fn battery_action_status(ui: &mut Ui, status: Option<&str>, command_output: &str) {
+    let Some(status) = status else {
+        return;
+    };
+    if !status.contains("电池") && !status.to_ascii_lowercase().contains("battery") {
+        return;
+    }
+
+    ui.add_space(10.0);
+    ui.label(
+        RichText::new(status)
+            .size(11.0)
+            .color(if command_output.is_empty() {
+                Color32::from_rgb(137, 181, 158)
+            } else {
+                Color32::from_rgb(221, 116, 94)
+            }),
+    );
+    if !command_output.is_empty() {
+        ui.label(
+            RichText::new(command_output)
+                .size(10.0)
+                .color(Color32::from_rgb(166, 139, 130)),
         );
-        status_item(
-            ui,
-            "Battery Utility",
-            config.and_then(|config| config.battery_utility_capability()),
-            "",
+    }
+}
+
+fn detail_row(ui: &mut Ui, label: &str, value: String) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(label)
+                .size(11.0)
+                .color(Color32::from_rgb(139, 148, 142)),
         );
-        status_item(
-            ui,
-            "EnergySave",
-            config.and_then(|config| config.energy_save_capability()),
-            "",
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(value)
+                .size(11.0)
+                .color(Color32::from_rgb(216, 223, 219)),
         );
     });
-}
-
-fn status_item(ui: &mut Ui, label: &str, state: Option<bool>, suffix: &str) {
-    let color = match state {
-        Some(true) => accent(),
-        Some(false) => Color32::from_rgb(203, 105, 91),
-        None => Color32::from_rgb(108, 116, 111),
-    };
-    let (dot_rect, _) = ui.allocate_exact_size(vec2(8.0, 16.0), Sense::hover());
-    ui.painter().circle_filled(dot_rect.center(), 3.0, color);
-    ui.label(
-        RichText::new(if suffix.is_empty() {
-            label.to_owned()
-        } else {
-            format!("{label} · {suffix}")
-        })
-        .size(11.0)
-        .color(Color32::from_rgb(132, 141, 135)),
-    );
+    ui.add_space(7.0);
 }
 
 fn section_title(ui: &mut Ui, title: &str, subtitle: &str) {
@@ -478,21 +381,53 @@ fn section_divider(ui: &mut Ui) {
     ui.add_space(9.0);
 }
 
-fn preset_range(preset: BatteryStrategyPreset) -> &'static str {
-    match preset {
-        BatteryStrategyPreset::Standard => "95–100%",
-        BatteryStrategyPreset::Care => "45–80%",
-        BatteryStrategyPreset::Endurance => "40–70%",
-    }
+fn battery_toggle(ui: &mut Ui, enabled: bool, accent: Color32) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(42.0, 22.0), Sense::click());
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with("battery_toggle"), enabled, 0.14);
+    let hover_t = ui.ctx().animate_bool_with_time(
+        response.id.with("battery_toggle_hover"),
+        response.hovered(),
+        0.1,
+    );
+    let painter = ui.painter_at(rect.expand(2.0));
+    painter.rect_filled(
+        rect,
+        11.0,
+        mix_color(Color32::from_rgb(46, 51, 48), accent, t * 0.65),
+    );
+    painter.rect_stroke(
+        rect,
+        11.0,
+        Stroke::new(
+            1.0,
+            mix_color(Color32::from_rgb(70, 77, 73), accent, t.max(hover_t * 0.5)),
+        ),
+    );
+    painter.circle_filled(
+        pos2(
+            rect.left() + 11.0 + (rect.width() - 22.0) * t,
+            rect.center().y,
+        ),
+        7.0,
+        Color32::from_rgb(231, 238, 234),
+    );
+    response.clicked()
 }
 
-fn accent() -> Color32 {
-    Color32::from_rgb(82, 210, 160)
+fn health_color(health: Option<u8>) -> Color32 {
+    match health {
+        Some(80..=100) => Color32::from_rgb(82, 210, 160),
+        Some(60..=79) => Color32::from_rgb(220, 172, 82),
+        Some(_) => Color32::from_rgb(221, 116, 94),
+        None => Color32::from_rgb(104, 111, 107),
+    }
 }
 
 fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
     Color32::from_rgb(
         mix(from.r(), to.r()),
         mix(from.g(), to.g()),
@@ -500,25 +435,14 @@ fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
     )
 }
 
-fn percent_t(value: u8) -> f32 {
-    (value as f32 / 100.0).clamp(0.0, 1.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn percent_position_is_clamped() {
-        assert_eq!(percent_t(0), 0.0);
-        assert_eq!(percent_t(100), 1.0);
-        assert_eq!(percent_t(150), 1.0);
-    }
-
-    #[test]
-    fn preset_ranges_match_strategy_defaults() {
-        assert_eq!(preset_range(BatteryStrategyPreset::Standard), "95–100%");
-        assert_eq!(preset_range(BatteryStrategyPreset::Care), "45–80%");
-        assert_eq!(preset_range(BatteryStrategyPreset::Endurance), "40–70%");
+    fn health_color_uses_distinct_condition_bands() {
+        assert_ne!(health_color(Some(90)), health_color(Some(70)));
+        assert_ne!(health_color(Some(70)), health_color(Some(40)));
+        assert_ne!(health_color(Some(40)), health_color(None));
     }
 }

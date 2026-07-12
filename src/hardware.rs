@@ -13,6 +13,7 @@ pub trait HardwareBackend: Send + Sync {
     fn set_power_mode(&self, mode: PowerMode) -> Result<(), String>;
     fn set_fan_curve(&self, profile: &FanCurveProfile) -> Result<(), String>;
     fn set_gpu_mux(&self, mode: GpuMuxMode) -> Result<(), String>;
+    fn set_battery_saver(&self, enabled: bool) -> Result<(), String>;
 }
 
 pub fn native_backend() -> Box<dyn HardwareBackend> {

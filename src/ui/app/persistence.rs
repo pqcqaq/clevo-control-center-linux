@@ -42,7 +42,6 @@ impl ClevoLedApp {
         self.fan_curves = settings.fan_curves.clone();
         self.fan_curve_draft = settings.fan_curves;
         self.fan_curve_selection = None;
-        self.battery_strategy = settings.battery_strategy;
         self.language_preference = settings.language;
         self.language = settings.language.resolved();
         self.theme_color = settings.theme_color;
@@ -102,7 +101,6 @@ impl ClevoLedApp {
                 f0_color: self.f0_color,
                 zones: self.selected_zones(),
                 fan_curves: self.fan_curves.clone(),
-                battery_strategy: self.battery_strategy.clone(),
                 language: self.language_preference,
                 theme_color: self.theme_color,
                 window_pos: self.window_pos,

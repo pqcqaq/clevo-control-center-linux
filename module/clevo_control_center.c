@@ -25,8 +25,8 @@
 #define DCHU_STATUS_PROC_NAME "clevo_dchu_status"
 #define DCHU_APP_SETTINGS_PROC_NAME "clevo_dchu_app_settings"
 #define MODULE_VERSION_PROC_NAME "clevo_control_center_version"
-#define CLEVO_MODULE_API_VERSION 8
-#define CLEVO_MODULE_API_VERSION_STRING "8"
+#define CLEVO_MODULE_API_VERSION 9
+#define CLEVO_MODULE_API_VERSION_STRING "9"
 #define DCHU_PATH "\\_SB.DCHU"
 #define DCHU_FUNCTION 0x67
 #define DCHU_BUFFER_SIZE 0x100
@@ -59,6 +59,7 @@ static acpi_handle dchu_handle;
 static u8 dchu_app_settings[DCHU_APP_SETTINGS_SIZE];
 static bool dchu_app_power_mode_valid;
 static bool dchu_app_fan_mode_valid;
+static DEFINE_MUTEX(dchu_eval_lock);
 static DEFINE_MUTEX(dchu_app_settings_lock);
 static bool verbose;
 
@@ -111,7 +112,9 @@ static int clevo_dchu_eval(u32 function, const u8 *payload, size_t payload_len,
 	input.count = ARRAY_SIZE(argv4);
 	input.pointer = argv4;
 
+	mutex_lock(&dchu_eval_lock);
 	status = acpi_evaluate_object(dchu_handle, "_DSM", &input, &output);
+	mutex_unlock(&dchu_eval_lock);
 	if (ACPI_FAILURE(status)) {
 		pr_err("clevo_control_center: _DSM function=0x%02x failed: %s\n",
 		       function, acpi_format_exception(status));
@@ -201,7 +204,9 @@ static int clevo_dchu_eval_buffer(u32 function, const u8 *payload, size_t payloa
 	input.count = ARRAY_SIZE(argv4);
 	input.pointer = argv4;
 
+	mutex_lock(&dchu_eval_lock);
 	status = acpi_evaluate_object(dchu_handle, "_DSM", &input, &output);
+	mutex_unlock(&dchu_eval_lock);
 	if (ACPI_FAILURE(status)) {
 		pr_err("clevo_control_center: _DSM function=0x%02x failed: %s\n",
 		       function, acpi_format_exception(status));
@@ -243,11 +248,26 @@ static size_t clevo_dchu_append_gpu_mux_info(char *output, size_t output_size)
 				    "bios_feature_04_08_version integer 0x%x\n",
 				    version);
 		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset15 integer 0x%02x\n",
+				    result[15]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset16 integer 0x%02x\n",
+				    result[16]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset17 integer 0x%02x\n",
+				    result[17]);
+		offset += scnprintf(output + offset, output_size - offset,
 				    "bios_feature_04_08_offset18 integer 0x%02x\n",
 				    result[18]);
 	} else {
 		offset += scnprintf(output + offset, output_size - offset,
 				    "bios_feature_04_08_version unknown\n");
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset15 unknown\n");
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset16 unknown\n");
+		offset += scnprintf(output + offset, output_size - offset,
+				    "bios_feature_04_08_offset17 unknown\n");
 		offset += scnprintf(output + offset, output_size - offset,
 				    "bios_feature_04_08_offset18 unknown\n");
 	}
@@ -270,6 +290,112 @@ static size_t clevo_dchu_append_gpu_mux_info(char *output, size_t output_size)
 				    "gpu_mux_04_15_current unknown\n");
 		offset += scnprintf(output + offset, output_size - offset,
 				    "gpu_mux_04_15_options unknown\n");
+	}
+
+	return offset;
+}
+
+static int clevo_dchu_get_battery_saver_status(u8 *status)
+{
+	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
+	u8 result[DCHU_BUFFER_SIZE] = { 0 };
+	size_t result_len = 0;
+	int ret;
+
+	if (!status)
+		return -EINVAL;
+
+	payload[0] = 13;
+	ret = clevo_dchu_eval_buffer(0x04, payload, sizeof(payload),
+				     result, sizeof(result), &result_len);
+	if (ret)
+		return ret;
+	if (result_len < 1)
+		return -ENODATA;
+
+	*status = result[0];
+	return 0;
+}
+
+static size_t clevo_dchu_append_battery_info(char *output, size_t output_size)
+{
+	u8 result[DCHU_BUFFER_SIZE] = { 0 };
+	size_t result_len = 0;
+	size_t offset = 0;
+	u8 battery_saver_status;
+	int ret;
+
+	ret = clevo_dchu_get_battery_saver_status(&battery_saver_status);
+	if (!ret) {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_saver_04_0d_status integer 0x%02x\n",
+				    battery_saver_status);
+	} else {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_saver_04_0d_status unknown\n");
+	}
+
+	ret = clevo_dchu_eval_buffer(0x07, NULL, 0, result, sizeof(result),
+				     &result_len);
+	if (!ret && result_len > 20) {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_version integer 0x%04x\n",
+				    ((u16)result[1] << 8) | result[0]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_manufacture_date integer 0x%04x\n",
+				    ((u16)result[3] << 8) | result[2]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_cycle_count integer 0x%04x\n",
+				    ((u16)result[5] << 8) | result[4]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_full_charge_capacity integer 0x%04x\n",
+				    ((u16)result[7] << 8) | result[6]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_design_capacity integer 0x%04x\n",
+				    ((u16)result[9] << 8) | result[8]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_status integer 0x%04x\n",
+				    ((u16)result[11] << 8) | result[10]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_pf_status integer 0x%08x\n",
+				    ((u32)result[15] << 24) | ((u32)result[14] << 16) |
+				    ((u32)result[13] << 8) | result[12]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_operation_status integer 0x%08x\n",
+				    ((u32)result[19] << 24) | ((u32)result[18] << 16) |
+				    ((u32)result[17] << 8) | result[16]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_stop_charging_threshold integer 0x%02x\n",
+				    result[20]);
+	} else {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "battery_info_07_version unknown\n"
+				    "battery_info_07_manufacture_date unknown\n"
+				    "battery_info_07_cycle_count unknown\n"
+				    "battery_info_07_full_charge_capacity unknown\n"
+				    "battery_info_07_design_capacity unknown\n"
+				    "battery_info_07_status unknown\n"
+				    "battery_info_07_pf_status unknown\n"
+				    "battery_info_07_operation_status unknown\n"
+				    "battery_info_07_stop_charging_threshold unknown\n");
+	}
+
+	memset(result, 0, sizeof(result));
+	result_len = 0;
+	ret = clevo_dchu_eval_buffer(0x11, NULL, 0, result, sizeof(result),
+				     &result_len);
+	if (!ret && result_len > 209) {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "energy_save_11_default_charge_limit integer 0x%02x\n",
+				    result[208]);
+		offset += scnprintf(output + offset, output_size - offset,
+				    "energy_save_11_default_discharge_limit integer 0x%02x\n",
+				    result[209]);
+	} else {
+		offset += scnprintf(output + offset, output_size - offset,
+				    "energy_save_11_default_charge_limit unknown\n");
+		offset += scnprintf(output + offset, output_size - offset,
+				    "energy_save_11_default_discharge_limit unknown\n");
 	}
 
 	return offset;
@@ -740,6 +866,52 @@ static int clevo_dchu_set_gpu_mux(const char *value)
 	return clevo_dchu_eval(0x04, payload, sizeof(payload), NULL);
 }
 
+static int clevo_dchu_set_battery_saver(const char *value)
+{
+	u8 capability_payload[DCHU_BUFFER_SIZE] = { 0 };
+	u8 payload[DCHU_BUFFER_SIZE] = { 0 };
+	u8 result[DCHU_BUFFER_SIZE] = { 0 };
+	u8 expected;
+	u8 actual;
+	size_t result_len = 0;
+	int ret;
+
+	if (!strcmp(value, "on") || !strcmp(value, "1"))
+		expected = 1;
+	else if (!strcmp(value, "off") || !strcmp(value, "0"))
+		expected = 0;
+	else
+		return -EINVAL;
+
+	capability_payload[0] = 8;
+	ret = clevo_dchu_eval_buffer(0x04, capability_payload,
+				     sizeof(capability_payload), result,
+				     sizeof(result), &result_len);
+	if (ret)
+		return ret;
+	if (result_len <= 15 || (((u16)result[0] << 8) | result[1]) != 0x0100 ||
+	    !(result[15] & BIT(2)))
+		return -EOPNOTSUPP;
+
+	memset(result, 0, sizeof(result));
+	result_len = 0;
+	payload[0] = 13;
+	payload[1] = 1;
+	payload[2] = expected;
+	ret = clevo_dchu_eval_buffer(0x04, payload, sizeof(payload),
+				     result, sizeof(result), &result_len);
+	if (ret)
+		return ret;
+
+	ret = clevo_dchu_get_battery_saver_status(&actual);
+	if (ret)
+		return ret;
+	if (actual != expected)
+		return -EIO;
+
+	return 0;
+}
+
 static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ubuf,
 					size_t count, loff_t *ppos)
 {
@@ -779,6 +951,10 @@ static ssize_t clevo_dchu_control_write(struct file *file, const char __user *ub
 		if (matched != 2)
 			return -EINVAL;
 		ret = clevo_dchu_set_gpu_mux(value);
+	} else if (!strcmp(command, "battery-saver")) {
+		if (matched != 2)
+			return -EINVAL;
+		ret = clevo_dchu_set_battery_saver(value);
 	} else {
 		return -EINVAL;
 	}
@@ -797,7 +973,9 @@ static ssize_t clevo_dchu_control_read(struct file *file, char __user *ubuf,
 		"  echo 'power-mode 2' > /proc/clevo_dchu_control\n"
 		"  echo 'fan-curve 40:32,58:42,78:72,100:100 40:32,60:44,80:74,100:100' > /proc/clevo_dchu_control\n"
 		"  echo 'gpu-mux dgpu' > /proc/clevo_dchu_control\n"
-		"  echo 'gpu-mux mshybrid' > /proc/clevo_dchu_control\n";
+		"  echo 'gpu-mux mshybrid' > /proc/clevo_dchu_control\n"
+		"  echo 'battery-saver on' > /proc/clevo_dchu_control\n"
+		"  echo 'battery-saver off' > /proc/clevo_dchu_control\n";
 
 	return simple_read_from_buffer(ubuf, count, ppos, help, strlen(help));
 }
@@ -861,7 +1039,7 @@ static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
 {
 	struct dchu_result *result;
 	char *output;
-	size_t output_size = DCHU_MAX_OUTPUT + 384;
+	size_t output_size = DCHU_MAX_OUTPUT + 1536;
 	size_t offset = 0;
 	int ret;
 
@@ -898,6 +1076,7 @@ static ssize_t clevo_dchu_config_read(struct file *file, char __user *ubuf,
 		goto out;
 	offset += scnprintf(output + offset, output_size - offset, "psf2_7a %s", result->text);
 	offset += clevo_dchu_append_gpu_mux_info(output + offset, output_size - offset);
+	offset += clevo_dchu_append_battery_info(output + offset, output_size - offset);
 	offset += clevo_dchu_app_settings_format(output + offset, output_size - offset);
 
 	ret = simple_read_from_buffer(ubuf, count, ppos, output, offset);
@@ -1027,6 +1206,6 @@ module_init(clevo_control_center_init);
 module_exit(clevo_control_center_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Codex");
+MODULE_AUTHOR("qcqcqc <qcqcqc@zust.online>");
 MODULE_DESCRIPTION("Clevo/BlueSky control center ACPI bridge");
 MODULE_VERSION(CLEVO_MODULE_API_VERSION_STRING);

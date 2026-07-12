@@ -2,6 +2,7 @@
 name = "clevo-control-center"
 version = "0.1.0"
 edition = "2021"
+authors = ["qcqcqc <qcqcqc@zust.online>"]
 description = "Clevo/BlueSky control center for Linux"
 license = "GPL-2.0-only"
 repository = "https://github.com/pqcqaq/clevo-control-center-linux"

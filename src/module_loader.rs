@@ -10,7 +10,7 @@ const REQUIRED_PROC_NODES: [&str; 3] = [
     "/proc/clevo_dchu_control",
 ];
 const MODULE_VERSION_PROC: &str = "/proc/clevo_control_center_version";
-const REQUIRED_MODULE_API_VERSION: u32 = 8;
+const REQUIRED_MODULE_API_VERSION: u32 = 9;
 const MODULE_FILE_NAME: &str = "clevo_control_center.ko";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

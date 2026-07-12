@@ -26,7 +26,7 @@
 | 键盘 RGB | 单区实机验证 | 根据 WMI13 `KBTP` 识别单区、三区和逐键家族；目前支持单区/三区 RGB 写入，逐键类型只识别、不输出逐键灯效。 |
 | 软件灯效 | 单区实机验证 | 后台服务以 15 ms deadline 生成循环、波浪、闪烁和呼吸帧，实测单区刷新率高于 60 FPS。 |
 | GPU MUX | 实验性写入 | 只提供 `dGPU`/`MSHybrid`，确认后写入并立即请求重启。仅在原厂明确支持这些模式时使用。 |
-| 电池策略 | 仅本地配置 | 保存阈值和策略意图到 `settings.json`；不写 EC、不切换系统电源计划。 |
+| 电池状态与保护 | 实验性硬件接入 | 优先读取有效的 WMI7 健康信息，无效或缺失时回退到 Linux `power_supply`；仅在 `WMI4/sub8 offset15 bit2` 允许时提供 Battery Saver 白名单开关，写后立即读回确认。EnergySave 阈值/计划与 Battery Utility 刷新暂不开放。 |
 | 语言与主题 | 已实现 | 默认跟随系统语言，可选简体中文/English；默认琥珀主题，可切换青色、翠绿或玫红。 |
 | 诊断/高级页面 | 仅 Debug | Release 构建在类型和导航层面完全移除这两个内部页面。 |
 
@@ -217,7 +217,7 @@ sudo insmod module/clevo_control_center.ko
 cat /proc/clevo_control_center_version
 ```
 
-当前用户态要求模块 API 8。GUI 会读取版本节点；模块缺失或 API 过旧时会提示并通过 `pkexec` 重新编译、安装和加载项目随附的模块源码。
+当前用户态要求模块 API 9。GUI 会读取版本节点；模块缺失或 API 过旧时会提示并通过 `pkexec` 重新编译、安装和加载项目随附的模块源码。
 
 卸载模块：
 
@@ -283,7 +283,7 @@ DCHU CLI ──────────┘
 
 程序会迁移旧的 `~/.config/clevo-keyboard-led/settings.json` 或开发目录中的旧版 `settings.json`。成功迁移的用户不会重复看到首次启动免责声明。
 
-自定义风扇曲线和电池页面策略都保存在 `settings.json`。区别是：总览选择风扇曲线时会执行硬件写入；电池策略在当前版本始终只保存在本地。
+自定义风扇曲线保存在 `settings.json`，总览选择曲线时才执行硬件写入。电池页面不再保存虚假的本地策略：健康和容量来自有效的 OEM WMI7 数据，OEM 数据无效时使用 Linux `power_supply`；Battery Saver 通过受限硬件命令切换，并由内核执行能力检查和写后读回。原厂 EnergySave 阈值/计划和 Battery Utility 刷新流程尚未开放。
 
 ## 开发与质量检查
 

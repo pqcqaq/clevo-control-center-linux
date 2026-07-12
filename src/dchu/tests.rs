@@ -125,9 +125,24 @@ fn parses_dchu_config_reply() {
          psf4_60 integer 0x21c\n\
          psf2_7a integer 0x70020053\n\
          bios_feature_04_08_version integer 0x0100\n\
+         bios_feature_04_08_offset15 integer 0x04\n\
+         bios_feature_04_08_offset16 integer 0x40\n\
+         bios_feature_04_08_offset17 integer 0x0f\n\
          bios_feature_04_08_offset18 integer 0x01\n\
          gpu_mux_04_15_current integer 0x03\n\
          gpu_mux_04_15_options integer 0x07\n\
+         battery_saver_04_0d_status integer 0x01\n\
+         battery_info_07_version integer 0x0100\n\
+         battery_info_07_manufacture_date integer 0x56b1\n\
+         battery_info_07_cycle_count integer 0x007b\n\
+         battery_info_07_full_charge_capacity integer 0x0892\n\
+         battery_info_07_design_capacity integer 0x0d52\n\
+         battery_info_07_status integer 0x0010\n\
+         battery_info_07_pf_status integer 0x00000000\n\
+         battery_info_07_operation_status integer 0x00001000\n\
+         battery_info_07_stop_charging_threshold integer 0x64\n\
+         energy_save_11_default_charge_limit integer 0x64\n\
+         energy_save_11_default_discharge_limit integer 0x5f\n\
          app_power_mode 2\n\
          app_fan_mode 3\n",
     )
@@ -141,12 +156,87 @@ fn parses_dchu_config_reply() {
     assert_eq!(config.psf4, Some(0x021c));
     assert_eq!(config.psf2, Some(0x7002_0053));
     assert_eq!(config.bios_feature_version, Some(0x0100));
+    assert_eq!(config.bios_feature_offset15, Some(0x04));
+    assert_eq!(config.bios_feature_offset16, Some(0x40));
+    assert_eq!(config.bios_feature_offset17, Some(0x0f));
     assert_eq!(config.bios_feature_offset18, Some(0x01));
     assert_eq!(config.gpu_mux_current, Some(0x03));
     assert_eq!(config.gpu_mux_options, Some(0x07));
     assert_eq!(config.app_power_mode, Some(2));
     assert_eq!(config.app_fan_mode, Some(3));
+    assert_eq!(config.battery_saver_capability(), Some(true));
+    assert_eq!(config.battery_saver_enabled(), Some(true));
+    assert_eq!(config.battery_health_percent(), Some(64));
+    assert_eq!(config.battery_manufacture_date(), Some((2023, 5, 17)));
+    assert_eq!(config.battery_cycle_count, Some(123));
+    assert_eq!(config.battery_pf_status, Some(0));
+    assert_eq!(config.battery_operation_status, Some(0x1000));
+    assert_eq!(config.battery_stop_charging_threshold, Some(100));
+    assert_eq!(config.energy_save_default_charge_limit, Some(100));
+    assert_eq!(config.energy_save_default_discharge_limit, Some(95));
     assert_eq!(config.raw_config.len(), 32);
+}
+
+#[test]
+fn rejects_zero_capacity_oem_battery_packet() {
+    let config = DchuConfig {
+        battery_info_version: Some(0),
+        battery_full_charge_capacity: Some(0),
+        battery_design_capacity: Some(0),
+        ..DchuConfig::default()
+    };
+
+    assert!(!config.battery_info_available());
+    assert_eq!(config.battery_health_percent(), None);
+}
+
+#[test]
+fn rejects_unknown_battery_saver_state() {
+    let config = DchuConfig {
+        bios_feature_version: Some(0x0100),
+        bios_feature_offset15: Some(1 << 2),
+        battery_saver_status: Some(2),
+        ..DchuConfig::default()
+    };
+
+    assert_eq!(config.battery_saver_enabled(), None);
+}
+
+#[test]
+fn derives_health_from_linux_power_supply_capacity() {
+    let battery = SystemBatteryInfo {
+        full_capacity: Some(2197),
+        design_capacity: Some(3410),
+        capacity_unit: Some(BatteryCapacityUnit::MilliampHours),
+        ..SystemBatteryInfo::default()
+    };
+
+    assert_eq!(battery.health_percent(), Some(64));
+}
+
+#[test]
+fn system_battery_health_handles_extreme_snapshot_values() {
+    let battery = SystemBatteryInfo {
+        full_capacity: Some(u64::MAX),
+        design_capacity: Some(u64::MAX),
+        ..SystemBatteryInfo::default()
+    };
+
+    assert_eq!(battery.health_percent(), Some(100));
+}
+
+#[test]
+fn system_battery_json_keeps_existing_runtime_values_compatible() {
+    let battery = serde_json::from_str::<SystemBatteryInfo>(
+        r#"{"status":"Full","full_capacity":2197,"design_capacity":3410,"capacity_unit":"Mah"}"#,
+    )
+    .unwrap();
+
+    assert_eq!(battery.status, Some(BatteryChargeStatus::Full));
+    assert_eq!(
+        battery.capacity_unit,
+        Some(BatteryCapacityUnit::MilliampHours)
+    );
 }
 
 #[test]
@@ -237,6 +327,7 @@ fn gpu_mux_modes_keep_write_targets_available() {
             gpu_mux_options: Some(0x06),
             ..DchuConfig::default()
         }),
+        system_battery: None,
         battery_voltage_raw: 0,
         battery_rate_raw: 0,
         thermal_raw: [0; 4],
@@ -263,6 +354,7 @@ fn gpu_mux_modes_ignore_missing_firmware_options() {
             psf2: Some(1 << 20),
             ..DchuConfig::default()
         }),
+        system_battery: None,
         battery_voltage_raw: 0,
         battery_rate_raw: 0,
         thermal_raw: [0; 4],
@@ -285,6 +377,7 @@ fn gpu_mux_modes_ignore_incomplete_firmware_options() {
             gpu_mux_options: Some(0x02),
             ..DchuConfig::default()
         }),
+        system_battery: None,
         battery_voltage_raw: 0,
         battery_rate_raw: 0,
         thermal_raw: [0; 4],

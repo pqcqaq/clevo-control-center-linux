@@ -30,6 +30,7 @@ impl HardwareSnapshot {
             temperature_sensors: temperature_sensors(bytes),
             raw_status: bytes.to_vec(),
             dchu_config: None,
+            system_battery: None,
             battery_voltage_raw: get_be_u16(bytes, 0x08),
             battery_rate_raw: get_be_u16(bytes, 0x0e),
             thermal_raw: [
@@ -189,6 +190,21 @@ pub(super) fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> 
                 parse_optional_u16_hex(value, "bios_feature_04_08_version")?;
             continue;
         }
+        if let Some(value) = line.strip_prefix("bios_feature_04_08_offset15 ") {
+            config.bios_feature_offset15 =
+                parse_optional_u8_hex(value, "bios_feature_04_08_offset15")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("bios_feature_04_08_offset16 ") {
+            config.bios_feature_offset16 =
+                parse_optional_u8_hex(value, "bios_feature_04_08_offset16")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("bios_feature_04_08_offset17 ") {
+            config.bios_feature_offset17 =
+                parse_optional_u8_hex(value, "bios_feature_04_08_offset17")?;
+            continue;
+        }
         if let Some(value) = line.strip_prefix("bios_feature_04_08_offset18 ") {
             config.bios_feature_offset18 =
                 parse_optional_u8_hex(value, "bios_feature_04_08_offset18")?;
@@ -208,6 +224,63 @@ pub(super) fn parse_dchu_config_reply(text: &str) -> Result<DchuConfig, String> 
         }
         if let Some(value) = line.strip_prefix("app_fan_mode ") {
             config.app_fan_mode = parse_optional_u8(value, "app_fan_mode")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_saver_04_0d_status ") {
+            config.battery_saver_status =
+                parse_optional_u8_hex(value, "battery_saver_04_0d_status")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_version ") {
+            config.battery_info_version = parse_optional_u16_hex(value, "battery_info_07_version")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_manufacture_date ") {
+            config.battery_manufacture_date_raw =
+                parse_optional_u16_hex(value, "battery_info_07_manufacture_date")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_cycle_count ") {
+            config.battery_cycle_count =
+                parse_optional_u16_hex(value, "battery_info_07_cycle_count")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_full_charge_capacity ") {
+            config.battery_full_charge_capacity =
+                parse_optional_u16_hex(value, "battery_info_07_full_charge_capacity")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_design_capacity ") {
+            config.battery_design_capacity =
+                parse_optional_u16_hex(value, "battery_info_07_design_capacity")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_status ") {
+            config.battery_status = parse_optional_u16_hex(value, "battery_info_07_status")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_pf_status ") {
+            config.battery_pf_status = parse_optional_u32_hex(value, "battery_info_07_pf_status")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_operation_status ") {
+            config.battery_operation_status =
+                parse_optional_u32_hex(value, "battery_info_07_operation_status")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("battery_info_07_stop_charging_threshold ") {
+            config.battery_stop_charging_threshold =
+                parse_optional_u8_hex(value, "battery_info_07_stop_charging_threshold")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("energy_save_11_default_charge_limit ") {
+            config.energy_save_default_charge_limit =
+                parse_optional_u8_hex(value, "energy_save_11_default_charge_limit")?;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("energy_save_11_default_discharge_limit ") {
+            config.energy_save_default_discharge_limit =
+                parse_optional_u8_hex(value, "energy_save_11_default_discharge_limit")?;
             continue;
         }
         if line.starts_with("psf") {
@@ -239,6 +312,18 @@ fn parse_optional_u16_hex(value: &str, label: &str) -> Result<Option<u16>, Strin
         return Err(format!("invalid {label} value"));
     };
     u16::from_str_radix(value, 16)
+        .map(Some)
+        .map_err(|_| format!("invalid {label} integer"))
+}
+
+fn parse_optional_u32_hex(value: &str, label: &str) -> Result<Option<u32>, String> {
+    let Some(value) = value.trim().strip_prefix("integer 0x") else {
+        if value.trim() == "unknown" {
+            return Ok(None);
+        }
+        return Err(format!("invalid {label} value"));
+    };
+    u32::from_str_radix(value, 16)
         .map(Some)
         .map_err(|_| format!("invalid {label} integer"))
 }
