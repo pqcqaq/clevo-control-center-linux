@@ -56,9 +56,10 @@ src/
   hardware.rs                 硬件后端契约和原生后端工厂
   hardware/
     linux.rs                  Linux 灯光与 DCHU 后端实现
-  effects.rs                  动态灯效颜色计算
+  effects.rs                  后台软件灯效帧生成与时间轴
   model.rs                    页面、灯效、颜色和分区领域模型
   module_loader.rs            GUI 内核模块版本检查和认证加载
+  preferences.rs              语言偏好、系统语言识别和主题色模型
   service.rs                  后台灯效服务、PID/lock 和硬件状态缓存
   settings.rs                 配置路径、迁移、读写和硬件状态缓存文件
   battery_strategy.rs         本地电池策略配置模型和校验
@@ -66,14 +67,15 @@ src/
   ui/
     app.rs                    应用状态和用户操作
     app/                      设置/硬件同步与窗口生命周期
-    pages.rs                  页面分发、设置页和 debug 诊断页
-    pages/                    总览、灯光和显卡业务页面
+    pages.rs                  页面分发和 debug 诊断页
+    pages/                    总览、灯光、显卡和设置业务页面
     advanced.rs               debug-only DCHU 高级只读信息解释
     fan.rs                    风扇曲线编辑页
     battery.rs                本地电池策略页
     fan_gauge.rs              风扇仪表盘组件和绘制
     color_picker.rs           Linux 原生调色盘调用和结果解析
     layout.rs                 侧边栏与主区域布局
+    theme.rs                  全局交互强调色调色板和 egui 主题应用
     widgets.rs                跨页面基础控件和字体安装
 ```
 
@@ -252,20 +254,24 @@ scripts/run-gui.sh
 GUI 页面：
 
 - 总览：灯效摘要、CPU/GPU 风扇转速和温度；第三路风扇 tach 有数据时额外显示 PCH 风扇
-- 灯光：键盘 RGB 色块、原生硬件灯效、分区和连续亮度
+- 灯光：键盘 RGB 色块、后台 60 FPS 软件灯效、能力感知分区和连续亮度
 - 风扇：本地自定义风扇曲线开关、曲线 1/2/3 编辑、保存、重置和恢复
 - 电池：本地电池策略开关、标准/保养/续航预设、充电阈值和低电量策略配置
 - 诊断（仅 debug 构建）：读取 DCHU 只读状态
-- 设置：选择 `f0-f6` 生效分区，并查看硬件读回摘要
+- 设置：切换界面语言与主题色、查看键盘灯类型和可用区域，并查看硬件读回摘要
 - 高级（仅 debug 构建）：风扇 raw/解析值、温度块、受限 AppSettings 模式状态、GPU MUX 只读回读、官方能力位解析和其他 DCHU raw 状态
 
-三分区 RGB 键盘的亮度和动态模式按 Clevo 原厂 `DCHU 0x67` 协议执行：亮度百分比连续映射到固件值，循环、波浪、闪烁和呼吸由 EC 直接运行，不再由后台服务持续刷静态颜色。GUI 只保存灯光设置，由后台服务统一串行下发亮度、颜色和 effect；自定义和呼吸模式可选择左、中、右分区，默认分区为 `f0-f2`。
+键盘类型直接读取 Clevo WMI13 的 `KBTP`：`2` 为三区 RGB，`6/22` 为单区 RGB15Color，逐键家族归为 Per-key。GUI 只展示硬件实际具备的用户区域；Logo 和灯条仅在各自能力位明确支持时出现，不把 `f0-f6` 固件命令码当作通用分区。
+
+亮度百分比连续映射到固件值。循环、波浪、闪烁和呼吸由后台服务按 15ms deadline 生成软件帧，为固件偶发慢写保留余量并保证实际刷新率不低于 60 FPS；设置文件仍按 250ms 检查，硬件快照由独立工作线程每 2 秒更新。单区 RGB 每帧只写一次主区域，三区波浪才使用左、中、右空间相位；落后帧会跳过过期 deadline，避免累计漂移。GUI 只保存配置，所有灯光写入继续由后台服务串行完成。
 
 “风扇”页中的自定义曲线保存到 `settings.json`。开启后，总览页的风扇模式行会额外显示 `曲线 1/2/3`；点击某条曲线时，程序会把对应 CPU/GPU 曲线转换成受限 `fan-curve` 命令写入 EC 风扇表，并把风扇模式切到 `custom`。曲线数据只以温度/占空比点传递，不暴露 EC raw payload。
 
 “电池”页中的策略当前也只保存到 `settings.json`。页面可配置启用状态、预设、充电起止阈值和低电量相关策略意图；当前版本不写入 EC、不切换系统电源计划，也不调用原厂 Battery Saver/EnergySave 写接口。
 
 普通启动 GUI 时，程序会自动拉起后台服务。后台服务通过固定目录中的 `clevo-control-center.lock` 和 `clevo-control-center.pid` 保持单例，并持续读取 `settings.json` 执行动态灯效，因此关闭 GUI 后灯效仍会继续。后台服务还会定期读取硬件状态并写入 runtime 缓存，GUI 打开后直接显示最近一次状态。
+
+界面语言默认跟随 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG` 中首个有效的系统 locale，也可以固定为简体中文或 English。主题默认保持原有琥珀色，可切换为青色、翠绿或玫红；风险、错误、电池健康和 GPU 模式等语义色不会随个性主题改变。
 
 可以同时打开多个 GUI 窗口。每个窗口都会把操作写入同一个 `settings.json`，并自动读取其他窗口保存的设置变化。
 
