@@ -17,6 +17,7 @@ use crate::hardware::HardwareBackend;
 #[cfg(debug_assertions)]
 use crate::model::AdvancedTab;
 use crate::model::{normalize_zones, ControlPage, Mode, Rgb, ZoneId, BASE_ZONES};
+use crate::module_loader::ModuleState;
 use crate::preferences::{LanguagePreference, ThemeColor, UiLanguage};
 use crate::settings::{
     atomic_write_hardware_snapshot, file_modified, hardware_snapshot_path, Settings,
@@ -46,10 +47,13 @@ pub struct ClevoLedApp {
     pub(super) language_preference: LanguagePreference,
     pub(super) language: UiLanguage,
     pub(super) theme_color: ThemeColor,
-    pub(super) last_error: Option<String>,
     pub(super) command_output: String,
     pub(super) command_status: Option<String>,
     pub(super) pending_gpu_mux_mode: Option<GpuMuxMode>,
+    pub(super) color_picker_open: bool,
+    pub(super) color_picker_draft: Rgb,
+    pub(super) module_prompt: Option<ModuleState>,
+    pub(super) module_error: Option<String>,
     window_pos: Option<[f32; 2]>,
     dirty_settings: bool,
     dirty_window_position: bool,
@@ -68,6 +72,11 @@ impl ClevoLedApp {
     ) -> Self {
         let language = settings.language.resolved();
         let hardware_snapshot_path = hardware_snapshot_path();
+        let initial_module_state = (!first_run).then(crate::module_loader::module_state);
+        let hardware_runtime_started = matches!(initial_module_state, Some(ModuleState::Ready));
+        if hardware_runtime_started {
+            crate::service::ensure_service_running();
+        }
         let hardware = if first_run {
             None
         } else {
@@ -110,16 +119,19 @@ impl ClevoLedApp {
             language_preference: settings.language,
             language,
             theme_color: settings.theme_color,
-            last_error: None,
             command_output: String::new(),
             command_status: None,
             pending_gpu_mux_mode: None,
+            color_picker_open: false,
+            color_picker_draft: settings.f0_color,
+            module_prompt: initial_module_state.filter(|state| *state != ModuleState::Ready),
+            module_error: None,
             window_pos: settings.window_pos,
             dirty_settings: false,
             dirty_window_position: false,
             last_settings_save: Instant::now(),
             first_run_pending: first_run,
-            hardware_runtime_started: !first_run,
+            hardware_runtime_started,
             first_run_error: None,
         };
         app.settings_mtime = file_modified(&app.settings_path);
@@ -131,14 +143,66 @@ impl ClevoLedApp {
         if self.hardware_runtime_started {
             return;
         }
-        if !crate::module_loader::ensure_module_loaded_for_gui(self.language) {
-            return;
+        match crate::module_loader::module_state() {
+            ModuleState::Ready => {
+                self.module_prompt = None;
+                self.module_error = None;
+            }
+            state => {
+                self.module_prompt = Some(state);
+                return;
+            }
         }
         if !self.hardware_backend.lighting_ready() {
             eprintln!("Keyboard RGB interface is not writable");
         }
         crate::service::ensure_service_running();
         self.hardware_runtime_started = true;
+    }
+
+    pub(super) fn process_module_request(&mut self) {
+        self.module_error = None;
+        match crate::module_loader::load_module_with_auth(self.language) {
+            Ok(()) if crate::module_loader::module_state() == ModuleState::Ready => {
+                self.start_hardware_runtime();
+                self.refresh_hardware_snapshot(false);
+            }
+            Ok(()) => {
+                let state = crate::module_loader::module_state();
+                self.module_prompt = Some(state);
+                self.module_error = Some(
+                    self.language
+                        .pick(
+                            "处理命令已完成，但模块仍不可用或版本过旧。请检查内核头文件后重试。",
+                            "The command completed, but the module is still unavailable or outdated. Check the kernel headers and try again.",
+                        )
+                        .to_owned(),
+                );
+            }
+            Err(err) => {
+                self.module_error = Some(match self.language {
+                    UiLanguage::SimplifiedChinese => format!("模块加载或更新失败：{err}"),
+                    UiLanguage::English => format!("Module loading or update failed: {err}"),
+                });
+            }
+        }
+    }
+
+    pub(super) fn open_color_picker(&mut self) {
+        self.color_picker_draft = self.f0_color;
+        self.color_picker_open = true;
+    }
+
+    pub(super) fn cancel_color_picker(&mut self) {
+        self.color_picker_open = false;
+        self.color_picker_draft = self.f0_color;
+    }
+
+    pub(super) fn apply_color_picker(&mut self) {
+        self.f0_color = self.color_picker_draft;
+        self.color_picker_open = false;
+        self.mark_settings_dirty();
+        self.persist_settings_if_due(true);
     }
 
     pub(super) fn accept_first_run_disclaimer(&mut self) {

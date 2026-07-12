@@ -47,14 +47,6 @@ else
     printf '[warn] Docker not found; the glibc 2.31 portable release binary cannot be built\n'
 fi
 
-if command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1; then
-    printf '[ok] color picker: '
-    command -v zenity 2>/dev/null || command -v kdialog
-else
-    printf '[missing] color picker: install zenity or kdialog\n'
-    missing=1
-fi
-
 kernel_build="/lib/modules/$(uname -r)/build"
 if [[ -d "$kernel_build" ]]; then
     printf '[ok] kernel headers: %s\n' "$kernel_build"

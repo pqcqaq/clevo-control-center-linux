@@ -34,12 +34,6 @@ fn main() -> eframe::Result {
 
     let (settings_path, first_run) = settings::settings_path_and_first_run();
     let settings = settings::load_settings(&settings_path);
-    if !first_run {
-        if !module_loader::ensure_module_loaded_for_gui(settings.language.resolved()) {
-            return Ok(());
-        }
-        service::ensure_service_running();
-    }
     let hardware_backend = hardware::native_backend();
 
     let mut viewport = ViewportBuilder::default()

@@ -4,7 +4,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: Clevo Control Center Contributors <qcqcqc@zust.online>
-Depends: libc6, zenity | kdialog
+Depends: libc6
 Recommends: pkexec, make, linux-headers-amd64
 Homepage: https://github.com/pqcqaq/clevo-control-center-linux
 Provides: clevo-keyboard-led

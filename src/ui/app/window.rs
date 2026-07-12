@@ -6,6 +6,7 @@ use eframe::egui::{
 };
 
 use super::ClevoLedApp;
+use crate::module_loader::ModuleState;
 use crate::ui::layout;
 
 const BODY_HORIZONTAL_MARGIN: f32 = 12.0;
@@ -37,10 +38,21 @@ impl eframe::App for ClevoLedApp {
                 ui.vertical(|ui| {
                     custom_title_bar(ui, ctx);
                     ui.add_space(8.0);
-                    body_frame(ui, |ui| layout::control_center(ui, self));
+                    let modal_open = self.module_prompt.is_some()
+                        || self.color_picker_open
+                        || self.pending_gpu_mux_mode.is_some();
+                    body_frame(ui, |ui| {
+                        ui.add_enabled_ui(!modal_open, |ui| layout::control_center(ui, self));
+                    });
                 });
             });
-        gpu_mux_confirm_dialog(ctx, self);
+        if self.module_prompt.is_some() {
+            module_dialog(ctx, self);
+        } else if self.color_picker_open {
+            crate::ui::color_picker::color_picker_dialog(ctx, self);
+        } else {
+            gpu_mux_confirm_dialog(ctx, self);
+        }
 
         self.persist_settings_if_due(false);
         ctx.request_repaint_after(Duration::from_millis(500));
@@ -251,6 +263,164 @@ fn body_frame(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
 
 fn body_margin() -> egui::Margin {
     egui::Margin::symmetric(BODY_HORIZONTAL_MARGIN, 0.0)
+}
+
+fn module_dialog(ctx: &Context, app: &mut ClevoLedApp) {
+    let Some(state) = app.module_prompt else {
+        return;
+    };
+
+    let language = app.language;
+    let palette = crate::ui::theme::palette(app.theme_color);
+    let (status, detail, action) = match state {
+        ModuleState::Ready => return,
+        ModuleState::Missing => (
+            language.pick("模块未加载", "Module not loaded").to_owned(),
+            language
+                .pick(
+                    "控制中心需要内核模块才能读取硬件并执行灯光、风扇和性能控制。继续后会请求系统管理员认证。",
+                    "The kernel module is required for hardware monitoring and lighting, fan, and performance controls. Continuing requests administrator authentication.",
+                )
+                .to_owned(),
+            language.pick("认证并加载", "Authenticate and load"),
+        ),
+        ModuleState::Outdated(Some(version)) => (
+            match language {
+                crate::preferences::UiLanguage::SimplifiedChinese => {
+                    format!("模块 API {version} 已过期")
+                }
+                crate::preferences::UiLanguage::English => {
+                    format!("Module API {version} is outdated")
+                }
+            },
+            match language {
+                crate::preferences::UiLanguage::SimplifiedChinese => format!(
+                    "当前程序需要 API {}。继续后会请求系统管理员认证并加载随程序提供的新模块。",
+                    crate::module_loader::required_module_api_version()
+                ),
+                crate::preferences::UiLanguage::English => format!(
+                    "This build requires API {}. Continuing requests administrator authentication and loads the bundled module.",
+                    crate::module_loader::required_module_api_version()
+                ),
+            },
+            language.pick("认证并更新", "Authenticate and update"),
+        ),
+        ModuleState::Outdated(None) => (
+            language
+                .pick("无法确认模块版本", "Module version unavailable")
+                .to_owned(),
+            match language {
+                crate::preferences::UiLanguage::SimplifiedChinese => format!(
+                    "版本节点缺失或不可读，当前程序需要 API {}。继续后会请求系统管理员认证并重新加载模块。",
+                    crate::module_loader::required_module_api_version()
+                ),
+                crate::preferences::UiLanguage::English => format!(
+                    "The version node is missing or unreadable; API {} is required. Continuing requests administrator authentication and reloads the module.",
+                    crate::module_loader::required_module_api_version()
+                ),
+            },
+            language.pick("认证并修复", "Authenticate and repair"),
+        ),
+    };
+
+    eframe::egui::Window::new("module_requirement")
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, 4.0))
+        .frame(
+            Frame::none()
+                .fill(Color32::from_rgb(29, 28, 25))
+                .stroke(Stroke::new(1.0, palette.border))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(22.0)),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(500.0);
+            ui.horizontal(|ui| {
+                warning_mark(ui);
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(language.pick(
+                            "启动检查 · 内核接口",
+                            "STARTUP CHECK · KERNEL INTERFACE",
+                        ))
+                        .size(11.0)
+                        .color(palette.accent),
+                    );
+                    ui.label(
+                        RichText::new(status)
+                            .size(22.0)
+                            .strong()
+                            .color(Color32::from_rgb(244, 236, 221)),
+                    );
+                });
+            });
+
+            ui.add_space(16.0);
+            Frame::none()
+                .fill(Color32::from_rgb(23, 22, 20))
+                .stroke(Stroke::new(1.0, Color32::from_rgb(57, 52, 45)))
+                .rounding(6.0)
+                .inner_margin(egui::Margin::same(14.0))
+                .show(ui, |ui| {
+                    ui.add(
+                        eframe::egui::Label::new(
+                            RichText::new(detail)
+                                .size(13.0)
+                                .color(Color32::from_rgb(194, 186, 173)),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(language.pick(
+                            "认证窗口由系统安全服务提供；密码不会传递给控制中心。",
+                            "Authentication is provided by the system security service; the password is never passed to Control Center.",
+                        ))
+                        .size(11.0)
+                        .color(Color32::from_rgb(147, 141, 131)),
+                    );
+                });
+
+            if let Some(error) = &app.module_error {
+                ui.add_space(12.0);
+                ui.add(
+                    eframe::egui::Label::new(
+                        RichText::new(error)
+                            .size(12.0)
+                            .color(Color32::from_rgb(225, 116, 94)),
+                    )
+                    .wrap(),
+                );
+            }
+
+            ui.add_space(18.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add_sized(
+                        vec2(160.0, 38.0),
+                        Button::new(RichText::new(action).strong().color(palette.text))
+                            .fill(palette.selected_surface)
+                            .stroke(Stroke::new(1.0, palette.border)),
+                    )
+                    .clicked()
+                {
+                    app.process_module_request();
+                }
+                ui.add_space(10.0);
+                if ui
+                    .add_sized(
+                        vec2(96.0, 38.0),
+                        Button::new(language.pick("退出程序", "Exit")),
+                    )
+                    .clicked()
+                {
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
+            });
+        });
 }
 
 fn gpu_mux_confirm_dialog(ctx: &Context, app: &mut ClevoLedApp) {

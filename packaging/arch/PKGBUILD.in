@@ -8,8 +8,6 @@ license=('GPL-2.0-only')
 depends=('glibc' 'bash')
 optdepends=(
     'polkit: graphical authorization for kernel module updates'
-    'zenity: module dialogs and system color picker'
-    'kdialog: KDE alternative to zenity'
     'linux-headers: build the module for the standard Arch kernel'
     'linux-lts-headers: build the module for the Arch LTS kernel'
 )

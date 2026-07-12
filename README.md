@@ -65,7 +65,6 @@ cd clevo-control-center-linux
 - 稳定版 Rust 工具链：`cargo`、`rustc`；
 - `make` 和当前运行内核对应的 headers，路径必须存在：`/lib/modules/$(uname -r)/build`；
 - `pkexec`，供 GUI 在模块缺失或 API 过旧时请求桌面权限；
-- `zenity` 或 `kdialog`，供模块处理提示和系统调色盘使用；
 - 构建 `.deb` 时额外需要 `dpkg-deb`，构建 `.rpm` 时需要 `rpmbuild`；
 - 完整 Release 需要 Docker，以 Debian Bullseye（glibc 2.31）基线构建跨发行版二进制；
 - Arch 包需要 `makepkg`，缺少时脚本可通过 Docker 的 `archlinux:base-devel` 镜像构建；
@@ -330,9 +329,9 @@ scripts/run-service.sh
 less "${XDG_STATE_HOME:-$HOME/.local/state}/clevo-control-center/clevo-control-center.service.log"
 ```
 
-### 系统调色盘或模块处理提示打不开
+### 模块认证无法启动
 
-安装 `zenity` 或 `kdialog`，并确认当前桌面会话可用。模块升级还需要 `pkexec` 和有效的 polkit 认证代理。
+模块检查、错误和颜色选择都由控制中心自己的界面显示，不依赖 `zenity` 或 `kdialog`。真正安装/更新内核模块时仍需要 `pkexec` 和有效的 polkit 认证代理；系统认证窗口中的密码不会传递给控制中心。
 
 ### 内核模块构建失败
 

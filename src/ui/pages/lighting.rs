@@ -124,15 +124,6 @@ pub(super) fn lighting_page(ui: &mut Ui, app: &mut ClevoLedApp) {
                 });
             });
         });
-
-    if let Some(err) = &app.last_error {
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new(err)
-                .size(12.0)
-                .color(Color32::from_rgb(221, 126, 93)),
-        );
-    }
 }
 
 fn brightness_control(
